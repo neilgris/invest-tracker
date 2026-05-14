@@ -21,7 +21,7 @@ from database import SessionLocal
 from models import AssetMeta, HistQuotesCache, AssetSectorMapping
 
 # ── 限速 ──────────────────────────────────────────────
-_MIN_INTERVAL = 1.0  # 秒，同一标的连续调用间隔
+_MIN_INTERVAL = 5.0  # 秒，同一标的连续调用间隔（避免限流）
 
 # ── 进度追踪 ──────────────────────────────────────────
 _sync_progress = {
@@ -138,27 +138,25 @@ def _ak_fund_nav_hist(symbol: str, start: str, end: str) -> pd.DataFrame | None:
 
 
 def _ak_sector_industry() -> pd.DataFrame | None:
-    """拉取东方财富行业板块列表（带重试）
-    注意：板块历史行情接口 stock_board_industry_hist_em 需要板块名称，
-    所以 code 字段存板块名称，拉历史时直接用 code 即可。
+    """拉取申万一级行业指数列表（替代东方财富）
+    申万指数更稳定，不会被限流
     """
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            df = ak.stock_board_industry_name_em()
+            df = ak.sw_index_first_info()
             if df is None or df.empty:
                 return None
-            # 东方财富返回含 '板块名称' 列
-            if "板块名称" in df.columns:
-                result = df[["板块名称"]].copy()
-                result.columns = ["name"]
-                result["code"] = result["name"]  # code = name
-                return result[["code", "name"]]
+            # 申万返回含 '行业代码' 和 '行业名称' 列
+            if "行业代码" in df.columns and "行业名称" in df.columns:
+                result = df[["行业代码", "行业名称"]].copy()
+                result.columns = ["code", "name"]
+                return result
             return None
         except Exception as e:
-            print(f"[sector] 行业板块列表拉取失败 (尝试 {attempt+1}/{max_retries}): {e}")
+            print(f"[sector] 申万行业列表拉取失败 (尝试 {attempt+1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # 指数退避: 1s, 2s, 4s
+                time.sleep(5)
             else:
                 return None
 
@@ -182,66 +180,53 @@ def _ak_sector_concept() -> pd.DataFrame | None:
         except Exception as e:
             print(f"[sector] 概念板块列表拉取失败 (尝试 {attempt+1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
+                time.sleep(5)  # 统一 5 秒间隔
             else:
                 return None
 
 
 def _ak_sector_hist(code: str, start: str, end: str) -> pd.DataFrame | None:
-    """拉取板块历史行情（东方财富）
-    注意：stock_board_industry_hist_em 需要板块名称而非代码。
-    此处先尝试用 code 当名称拉，失败则查 asset_meta 获取名称再试。
-    """
-    # 尝试1：直接用 code 作为名称
-    df = _try_sector_hist(code, start, end)
-    if df is not None:
-        return df
-
-    # 尝试2：从 asset_meta 查名称
-    name = _get_name_from_cache(code)
-    if name and name != code:
-        df = _try_sector_hist(name, start, end)
-        if df is not None:
-            return df
-
-    return None
+    """拉取申万行业指数历史行情（替代东方财富）"""
+    return _try_sw_sector_hist(code, start, end)
 
 
-def _try_sector_hist(symbol: str, start: str, end: str, max_retries: int = 2) -> pd.DataFrame | None:
-    """尝试拉取板块历史行情（带重试）"""
+def _try_sw_sector_hist(symbol: str, start: str, end: str, max_retries: int = 2) -> pd.DataFrame | None:
+    """尝试拉取申万行业指数历史行情（带重试）"""
     for attempt in range(max_retries):
         try:
-            df = ak.stock_board_industry_hist_em(
-                symbol=symbol, period="日k",
-                start_date=start, end_date=end, adjust=""
-            )
+            # 申万指数接口：symbol 不需要 .SI 后缀
+            symbol_clean = symbol.replace('.SI', '')
+            df = ak.index_hist_sw(symbol=symbol_clean, period='day')
             if df is None or df.empty:
                 return None
+
+            # 列名映射（中文 -> 英文）
             df["date"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
             df = df.rename(columns={
                 "开盘": "open", "收盘": "close", "最高": "high",
-                "最低": "low", "成交量": "volume", "成交额": "turnover",
-                "涨跌幅": "pct_change"
+                "最低": "low", "成交量": "volume", "成交额": "turnover"
             })
-            if "pct_change" not in df.columns:
-                df["pct_change"] = df["close"].pct_change() * 100
-            if "turnover" not in df.columns:
-                df["turnover"] = None
-            if "volume" not in df.columns:
-                df["volume"] = None
+
+            # 计算涨跌幅
+            df["pct_change"] = df["close"].pct_change() * 100
+
+            # 筛选日期范围（如果不是拉全部历史）
+            if start != "19900101" or end != date.today().strftime("%Y%m%d"):
+                df = df[(df["date"] >= start) & (df["date"] <= end)]
+            
+            # 确保所有列存在
+            for col in ["volume", "turnover"]:
+                if col not in df.columns:
+                    df[col] = None
+            
             return df[["date", "open", "close", "high", "low", "volume", "turnover", "pct_change"]]
         except Exception as e:
             err_msg = str(e)
             print(f"[sector] {symbol} 拉取失败 (尝试 {attempt+1}/{max_retries}): {err_msg[:100]}")
             if attempt < max_retries - 1:
-                # 东方财富限流时增加较长等待
-                if "RemoteDisconnected" in err_msg or "Connection" in err_msg:
-                    _set_progress("L2行业板块同步", _sync_progress.get("current", 0), _sync_progress.get("total", 0), symbol, f"{symbol} 被限流，等待5秒后重试...")
-                    time.sleep(5)
-                else:
-                    time.sleep(2)
+                _set_progress("L2行业板块同步", _sync_progress.get("current", 0), _sync_progress.get("total", 0), symbol, f"{symbol} 失败，5秒后重试...")
+                time.sleep(5)
             else:
-                # 最终失败时更新进度显示错误
                 _set_progress("L2行业板块同步", _sync_progress.get("current", 0), _sync_progress.get("total", 0), symbol, f"{symbol} 拉取失败: {err_msg[:50]}")
                 return None
 
@@ -262,6 +247,12 @@ def _fetch_and_cache(
     自动判断增量：只拉 DB 中不存在的日期区间。
     返回新增记录数，0 表示无新增（或拉取失败）。
     """
+    # 处理 None 情况（拉全部历史）
+    if start_date is None:
+        start_date = date(1990, 1, 1)  # 足够早的日期
+    if end_date is None:
+        end_date = date.today()
+
     s_start = start_date.strftime("%Y%m%d")
     s_end   = end_date.strftime("%Y%m%d")
 
@@ -397,12 +388,23 @@ def sync_single(code: str, asset_type: str = "stock",
     默认 5 年数据（指数/ETF 拉更长），传 None 表示拉取全部历史。
     返回 {"ok": bool, "saved": int, "message": str}
     """
-    if not end_date:
-        end_date = date.today()
-    if not start_date:
-        # 指数/ETF 拉 10 年，个股/板块拉 5 年
-        days = 365 * 10 if asset_type in ("index", "etf") else 365 * 5
-        start_date = end_date - timedelta(days=days)
+    # sector/index 类型传 None 表示拉全部历史，不设置默认日期
+    if asset_type in ("sector_industry", "sector_concept", "index"):
+        if start_date is None and end_date is None:
+            # 拉全部历史，不限制日期
+            pass
+        else:
+            if not end_date:
+                end_date = date.today()
+            if not start_date:
+                start_date = end_date - timedelta(days=365*10)
+    else:
+        if not end_date:
+            end_date = date.today()
+        if not start_date:
+            # ETF 拉 10 年，个股拉 5 年
+            days = 365 * 10 if asset_type == "etf" else 365 * 5
+            start_date = end_date - timedelta(days=days)
 
     db = SessionLocal()
     try:
@@ -433,11 +435,16 @@ def sync_batch(codes: list[str], asset_type: str = "stock",
     start_date / end_date 可选，默认 5 年。
     返回汇总报告。
     """
-    if not end_date:
-        end_date = date.today()
-    if not start_date:
-        days = 365 * 10 if asset_type in ("index", "etf") else 365 * 5
-        start_date = end_date - timedelta(days=days)
+    # sector 类型拉全部历史，其他按默认
+    if asset_type in ("sector_industry", "sector_concept"):
+        # 拉全部历史
+        start_date, end_date = None, None
+    else:
+        if not end_date:
+            end_date = date.today()
+        if not start_date:
+            days = 365 * 10 if asset_type in ("index", "etf") else 365 * 5
+            start_date = end_date - timedelta(days=days)
 
     results = []
     total_saved = 0
@@ -446,11 +453,11 @@ def sync_batch(codes: list[str], asset_type: str = "stock",
     _set_progress(task_name, 0, total, "", f"开始{task_name}，共{total}个标的")
 
     # 板块类型增加间隔避免限流
-    interval = 3.0 if asset_type in ("sector_industry", "sector_concept") else _MIN_INTERVAL
-    
+    interval = _MIN_INTERVAL  # 统一使用 5 秒间隔
+
     for i, code in enumerate(codes):
         _set_progress(task_name, i + 1, total, code, f"正在同步 {code} ({i+1}/{total})")
-        r = sync_single(code, asset_type)
+        r = sync_single(code, asset_type, start_date=start_date, end_date=end_date)
         results.append(r)
         total_saved += r.get("saved", 0)
         time.sleep(interval)
@@ -491,11 +498,12 @@ def sync_l1_indexes() -> dict:
         for code, name in L1_INDEX_CODES.items():
             meta = db.query(AssetMeta).filter(AssetMeta.code == code).first()
             if not meta:
-                db.add(AssetMeta(code=code, name=name, asset_type="index", category="宽基", is_cached=1))
+                db.add(AssetMeta(code=code, name=name, asset_type="index", category="宽基", source="csindex", is_cached=1))
             else:
                 meta.name = name
                 meta.asset_type = "index"
                 meta.category = "宽基"
+                meta.source = "csindex"
                 meta.is_cached = 1
         db.commit()
     finally:
@@ -509,7 +517,7 @@ def sync_l1_indexes() -> dict:
 
 
 def sync_l2_industry() -> dict:
-    """同步 L2 行业板块（首次全量，后续增量）"""
+    """同步 L2 行业板块（首次全量，后续增量）- 申万指数"""
     # 动态获取板块列表
     _set_progress("L2行业板块同步", 0, 1, "", "正在获取行业板块列表...")
     df = _ak_sector_industry()
@@ -529,16 +537,306 @@ def sync_l2_industry() -> dict:
         for code, name in zip(codes, names):
             meta = db.query(AssetMeta).filter(AssetMeta.code == code).first()
             if not meta:
-                db.add(AssetMeta(code=code, name=name, asset_type="sector_industry", is_cached=1))
+                db.add(AssetMeta(code=code, name=name, asset_type="sector_industry", source="sw", is_cached=1))
             else:
                 meta.name = name
                 meta.asset_type = "sector_industry"
+                meta.source = "sw"
                 meta.is_cached = 1
         db.commit()
     finally:
         db.close()
 
     return batch_result
+
+
+def sync_l2_industry_em() -> dict:
+    """
+    通过东方财富同步 L2 行业板块
+    - 每5秒访问一次接口（限速）
+    - 分页获取历史数据（每次2年）
+    - 遇到错误继续下一个板块
+    """
+    _set_progress("L2行业板块同步(EM)", 0, 1, "", "正在获取东方财富行业板块列表...")
+    
+    # 1. 获取板块列表
+    try:
+        df_list = ak.stock_board_industry_name_em()
+    except Exception as e:
+        _set_progress("L2行业板块同步(EM)", 0, 1, "", f"获取板块列表失败: {e}")
+        return {"ok": False, "message": f"获取板块列表失败: {e}"}
+    
+    if df_list is None or df_list.empty:
+        _set_progress("L2行业板块同步(EM)", 0, 1, "", "板块列表为空")
+        return {"ok": False, "message": "板块列表为空"}
+    
+    # 提取板块代码和名称
+    boards = []
+    for _, row in df_list.iterrows():
+        code = str(row.get("板块代码", "")).strip()
+        name = str(row.get("板块名称", "")).strip()
+        if code and name:
+            boards.append({"code": code, "name": name})
+    
+    total = len(boards)
+    _set_progress("L2行业板块同步(EM)", 0, total, "", f"获取到 {total} 个板块，开始同步...")
+    
+    db = SessionLocal()
+    saved_count = 0
+    error_count = 0
+    
+    try:
+        for idx, board in enumerate(boards, 1):
+            code = board["code"]
+            name = board["name"]
+            
+            _set_progress("L2行业板块同步(EM)", idx, total, code, f"正在同步 {name} ({idx}/{total})")
+            print(f"[{idx}/{total}] {code} {name}")
+            
+            try:
+                # 分页获取历史数据（每次2年）
+                total_saved = _fetch_em_sector_pages(code, name, db)
+                saved_count += total_saved
+                
+                # 更新或创建元数据
+                meta = db.query(AssetMeta).filter(AssetMeta.code == code).first()
+                if not meta:
+                    db.add(AssetMeta(
+                        code=code, name=name, asset_type="sector_industry",
+                        category="行业板块", source="em", is_cached=1
+                    ))
+                else:
+                    meta.name = name
+                    meta.asset_type = "sector_industry"
+                    meta.category = "行业板块"
+                    meta.source = "em"
+                    meta.is_cached = 1
+                db.commit()
+                
+                print(f"  ✓ 保存 {total_saved} 条")
+                
+            except Exception as e:
+                error_count += 1
+                print(f"  ✗ 失败: {e}")
+                db.rollback()
+                continue
+            
+            # 5秒间隔限速
+            if idx < total:
+                time.sleep(5)
+    
+    finally:
+        db.close()
+        _clear_progress()
+    
+    return {
+        "ok": True,
+        "message": f"同步完成: {total} 个板块, {saved_count} 条数据, {error_count} 个错误",
+        "total": total,
+        "saved": saved_count,
+        "errors": error_count
+    }
+
+
+def _fetch_em_sector_pages(symbol: str, name: str, db) -> int:
+    """
+    分页获取东方财富板块历史数据，每次2年
+    返回保存的记录数
+    """
+    from datetime import datetime, timedelta
+    
+    saved = 0
+    start_year = 1990
+    end_year = datetime.now().year + 1
+    
+    for year in range(start_year, end_year, 2):
+        start_date = f"{year}0101"
+        end_date = f"{min(year+1, end_year)}1231"
+        
+        try:
+            df = ak.stock_board_industry_hist_em(symbol=name, period="日k", 
+                                                  start_date=start_date, end_date=end_date)
+            if df is None or df.empty:
+                continue
+            
+            # 列名映射
+            df["date"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
+            df = df.rename(columns={
+                "开盘": "open", "收盘": "close", "最高": "high",
+                "最低": "low", "成交量": "volume", "成交额": "turnover"
+            })
+            df["pct_change"] = df["close"].pct_change() * 100
+            
+            # 保存到数据库
+            for _, row in df.iterrows():
+                date_str = row["date"]
+                date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                
+                existing = db.query(HistQuotesCache).filter(
+                    HistQuotesCache.code == symbol,
+                    HistQuotesCache.date == date_obj
+                ).first()
+                
+                if not existing:
+                    db.add(HistQuotesCache(
+                        code=symbol,
+                        date=date_obj,
+                        open=float(row["open"]) if pd.notna(row.get("open")) else None,
+                        close=float(row["close"]),
+                        high=float(row["high"]) if pd.notna(row.get("high")) else None,
+                        low=float(row["low"]) if pd.notna(row.get("low")) else None,
+                        volume=float(row["volume"]) if pd.notna(row.get("volume")) else None,
+                        turnover=float(row["turnover"]) if pd.notna(row.get("turnover")) else None,
+                        pct_change=float(row["pct_change"]) if pd.notna(row.get("pct_change")) else None,
+                    ))
+                    saved += 1
+            
+            db.commit()
+            
+        except Exception as e:
+            print(f"  [{symbol}] {year}-{year+1} 获取失败: {e}")
+            continue
+        
+        # 每次请求间隔1秒
+        time.sleep(1)
+    
+    return saved
+
+
+def _fetch_ths_sector_pages(symbol: str, name: str, db) -> int:
+    """
+    分页获取同花顺板块历史数据，每次200条
+    返回保存的记录数
+    """
+    from datetime import datetime, timedelta
+    
+    saved = 0
+    # 从1990年开始，每次获取2年数据（约500个交易日）
+    start_year = 1990
+    end_year = datetime.now().year + 1
+    
+    for year in range(start_year, end_year, 2):
+        start_date = f"{year}0101"
+        end_date = f"{min(year+1, end_year)}1231"
+        
+        try:
+            df = ak.stock_board_industry_index_ths(symbol=name, start_date=start_date, end_date=end_date)
+            if df is None or df.empty:
+                continue
+                
+            # 处理数据
+            df["date"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
+            df = df.rename(columns={
+                "开盘价": "open", "收盘价": "close", "最高价": "high",
+                "最低价": "low", "成交量": "volume", "成交额": "turnover"
+            })
+            df["pct_change"] = df["close"].pct_change() * 100
+            
+            # 保存到数据库
+            for _, row in df.iterrows():
+                from datetime import datetime
+                date_str = row["date"]
+                date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                existing = db.query(HistQuotesCache).filter(
+                    HistQuotesCache.code == symbol,
+                    HistQuotesCache.date == date_obj
+                ).first()
+                
+                if not existing:
+                    db.add(HistQuotesCache(
+                        code=symbol,
+                        date=date_obj,
+                        open=float(row["open"]) if pd.notna(row.get("open")) else None,
+                        close=float(row["close"]),
+                        high=float(row["high"]) if pd.notna(row.get("high")) else None,
+                        low=float(row["low"]) if pd.notna(row.get("low")) else None,
+                        volume=float(row["volume"]) if pd.notna(row.get("volume")) else None,
+                        turnover=float(row["turnover"]) if pd.notna(row.get("turnover")) else None,
+                        pct_change=float(row["pct_change"]) if pd.notna(row.get("pct_change")) else None,
+                    ))
+                    saved += 1
+            
+            db.commit()
+            
+        except Exception as e:
+            print(f"  [{symbol}] {year}-{year+1} 获取失败: {e}")
+            continue
+        
+        # 每次请求间隔1秒
+        time.sleep(1)
+    
+    return saved
+
+
+def sync_l2_industry_ths() -> dict:
+    """
+    通过同花顺同步 L2 行业板块
+    - 每5秒访问一次接口
+    - 分页获取历史数据（每次2年）
+    - 遇到错误继续下一个板块
+    """
+    _set_progress("L2行业板块同步(THS)", 0, 1, "", "正在获取同花顺行业板块列表...")
+
+    # 1. 获取板块列表
+    try:
+        df_list = ak.stock_board_industry_name_ths()
+    except Exception as e:
+        _set_progress("L2行业板块同步(THS)", 0, 1, "", f"获取板块列表失败: {e}")
+        return {"ok": False, "message": f"获取板块列表失败: {e}"}
+
+    if df_list is None or df_list.empty:
+        _set_progress("L2行业板块同步(THS)", 0, 1, "", "板块列表为空")
+        return {"ok": False, "message": "板块列表为空"}
+
+    # 提取板块代码和名称
+    boards = df_list.to_dict('records')
+    total = len(boards)
+
+    _set_progress("L2行业板块同步(THS)", 0, total, "", f"开始同步，共{total}个板块")
+
+    db = SessionLocal()
+    results = []
+    total_saved = 0
+
+    try:
+        for i, board in enumerate(boards):
+            symbol = board['code']
+            name = board['name']
+            _set_progress("L2行业板块同步(THS)", i + 1, total, symbol, f"正在同步 {name} ({i+1}/{total})")
+
+            try:
+                # 分页获取历史数据
+                saved = _fetch_ths_sector_pages(symbol, name, db)
+                
+                # 更新或创建元数据
+                meta = db.query(AssetMeta).filter(AssetMeta.code == symbol).first()
+                if not meta:
+                    db.add(AssetMeta(
+                        code=symbol,
+                        name=name,
+                        asset_type="sector_industry",
+                        source="ths",
+                        is_cached=1
+                    ))
+                else:
+                    meta.name = name
+                    meta.asset_type = "sector_industry"
+                    meta.source = "ths"
+                    meta.is_cached = 1
+                
+                db.commit()
+                results.append({"code": symbol, "name": name, "ok": True, "saved": saved})
+                total_saved += saved
+                
+            except Exception as e:
+                print(f"[{symbol}] {name} 同步失败: {e}")
+                results.append({"code": symbol, "name": name, "ok": False, "error": str(e)})
+
+    finally:
+        db.close()
+
+    _clear_progress()
+    return {"ok": True, "total": total, "saved": total_saved, "results": results}
 
 
 def sync_l3_concept() -> dict:
@@ -562,10 +860,11 @@ def sync_l3_concept() -> dict:
         for code, name in zip(codes, names):
             meta = db.query(AssetMeta).filter(AssetMeta.code == code).first()
             if not meta:
-                db.add(AssetMeta(code=code, name=name, asset_type="sector_concept", is_cached=1))
+                db.add(AssetMeta(code=code, name=name, asset_type="sector_concept", source="em", is_cached=1))
             else:
                 meta.name = name
                 meta.asset_type = "sector_concept"
+                meta.source = "em"
                 meta.is_cached = 1
         db.commit()
     finally:
@@ -606,6 +905,7 @@ def get_cache_status() -> dict:
                 "name": a.name or "",
                 "asset_type": a.asset_type,
                 "category": a.category or "",
+                "source": a.source or "",
                 "start": date_ranges_dict.get(a.code, {}).get("start"),
                 "end": date_ranges_dict.get(a.code, {}).get("end"),
             }

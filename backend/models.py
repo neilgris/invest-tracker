@@ -69,6 +69,7 @@ class AssetMeta(Base):
     name = Column(String(50), nullable=False)
     asset_type = Column(String(20), nullable=False)  # index / sector_industry / sector_concept / etf / stock / fund
     category = Column(String(30), nullable=True)       # 细分分类（ETF: 宽基/行业/主题/跨境/商品/债券; 行业: 金融/科技/消费...）
+    source = Column(String(20), nullable=True)       # 数据来源（sw=申万, csi=中证, wind=Wind等）
     benchmark_index = Column(String(10), nullable=True)  # 关联基准指数
     list_date = Column(Date, nullable=True)
     is_cached = Column(Integer, default=0)  # 是否已缓存历史数据
@@ -102,3 +103,13 @@ class AssetSectorMapping(Base):
     stock_code = Column(String(10), nullable=False, index=True)
     sector_code = Column(String(10), nullable=False, index=True)
     sector_type = Column(String(20), nullable=False)  # industry / concept
+
+
+class SyncLog(Base):
+    """同步日志表：记录上次行情同步时间"""
+    __tablename__ = "sync_log"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    sync_type = Column(String(20), nullable=False, default="daily")  # daily / history
+    synced_at = Column(DateTime, default=datetime.now)
+    record_count = Column(Integer, default=0)

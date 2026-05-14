@@ -155,6 +155,10 @@ def _get_fund_nav_hist(code: str, start_date: str, end_date: str) -> list[dict]:
         result = []
         for _, row in df.iterrows():
             nav = float(row["单位净值"])
+            # 过滤异常值（0或负数）
+            if nav <= 0:
+                print(f"  {code} 净值异常: {nav}，跳过")
+                continue
             result.append({
                 "date": str(row["净值日期"]),
                 "open": nav,
@@ -227,6 +231,70 @@ def _normalize_date(d: str) -> str:
     return s
 
 
+def _get_hist_from_tencent(code: str, start_date: str, end_date: str) -> list[dict]:
+    """从腾讯财经获取历史行情数据（备用接口）
+    
+    格式: http://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh512660,day,2024-01-01,2024-05-11,500,qfq
+    返回: [[日期, 开盘, 收盘, 最高, 最低, 成交量], ...]
+    """
+    import requests
+    
+    # 确定市场前缀
+    # 上海: 600-609, 688(科创), 510-519(ETF), 52, 53, 90, 91
+    # 深圳: 000-009, 300-309(创业), 159(ETF), 002-009
+    if code.startswith(("600", "601", "602", "603", "605", "688", "510", "511", "512", "513", "515", "516", "517", "518", "52", "53", "90", "91")):
+        prefix = "sh"
+    else:
+        prefix = "sz"
+    
+    # 转换日期格式
+    start_fmt = _normalize_date(start_date)
+    end_fmt = _normalize_date(end_date)
+    
+    url = "http://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    # 请求足够多的数据（500条），然后本地过滤
+    params = {
+        "param": f"{prefix}{code},day,{start_fmt},{end_fmt},1000,qfq"
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    
+    try:
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        data = resp.json()
+        
+        key = f"{prefix}{code}"
+        if "data" not in data or key not in data["data"]:
+            return []
+        
+        # 腾讯接口可能返回 day 或 qfqday（前复权）
+        stock_data = data["data"][key]
+        klines = stock_data.get("qfqday") or stock_data.get("day") or []
+        if not klines:
+            return []
+        
+        result = []
+        for item in klines:
+            # item: [日期, 开盘, 收盘, 最高, 最低, 成交量]
+            close_price = float(item[2])
+            # 过滤异常值（0或负数）
+            if close_price <= 0:
+                print(f"  {code} 价格异常: {close_price}，跳过")
+                continue
+            result.append({
+                "date": item[0],
+                "open": float(item[1]),
+                "close": close_price,
+                "high": float(item[3]),
+                "low": float(item[4]),
+            })
+        return result
+    except Exception as e:
+        print(f"腾讯财经接口失败 {code}: {e}")
+        return []
+
+
 def get_hist_prices(code: str, start_date: str, end_date: str) -> list[dict]:
     """获取历史行情数据"""
     # 开放式基金：走净值接口
@@ -236,6 +304,7 @@ def get_hist_prices(code: str, start_date: str, end_date: str) -> list[dict]:
     start_fmt = _normalize_date(start_date)
     end_fmt = _normalize_date(end_date)
 
+    # 优先尝试 akshare（东方财富）
     try:
         if code.startswith("000") and len(code) == 6:
             df = ak.stock_zh_index_daily(symbol=f"sh{code}")
@@ -249,22 +318,22 @@ def get_hist_prices(code: str, start_date: str, end_date: str) -> list[dict]:
             if df is not None and not df.empty:
                 df["日期"] = df["日期"].astype(str)
 
-        if df is None or df.empty:
-            return []
-
-        result = []
-        for _, row in df.iterrows():
-            result.append({
-                "date": str(row["日期"]),
-                "open": float(row["开盘"]) if "开盘" in row else None,
-                "close": float(row["收盘"]),
-                "high": float(row["最高"]) if "最高" in row else None,
-                "low": float(row["最低"]) if "最低" in row else None,
-            })
-        return result
+        if df is not None and not df.empty:
+            result = []
+            for _, row in df.iterrows():
+                result.append({
+                    "date": str(row["日期"]),
+                    "open": float(row["开盘"]) if "开盘" in row else None,
+                    "close": float(row["收盘"]),
+                    "high": float(row["最高"]) if "最高" in row else None,
+                    "low": float(row["最低"]) if "最低" in row else None,
+                })
+            return result
     except Exception as e:
-        print(f"获取历史行情失败 {code}: {e}")
-        return []
+        print(f"akshare 接口失败 {code}: {e}，尝试备用接口")
+    
+    # 备用：腾讯财经
+    return _get_hist_from_tencent(code, start_date, end_date)
 
 
 def _is_trading_day(d: date) -> bool:
@@ -278,11 +347,20 @@ def _save_snapshots(db, code: str, prices: list[dict], quantity: float = 0, tota
     注意：
     1. 只保存交易日数据（周一到周五），跳过周末
     2. 对于今天的数据，如果 akshare 还没更新（返回的日期不是今天），跳过
+    3. 价格异常（<=0）的数据会被过滤
     """
     from models import DailySnapshot
 
     if not prices:
         return 0
+    
+    # 过滤异常价格数据
+    valid_prices = [p for p in prices if p.get("close", 0) > 0]
+    if not valid_prices:
+        print(f"  {code} 无有效价格数据（全部异常），跳过保存")
+        return 0
+    
+    prices = valid_prices
 
     today = date.today()
     saved = 0
@@ -412,11 +490,17 @@ def recalc_snapshots_pnl(code: str = None):
                             running_qty += trade["quantity"]
                             running_cost += trade["amount"]
                         elif trade["direction"] == "sell":
+                            # FIFO: 按当前成本单价减少成本
+                            if running_qty > 0:
+                                avg_cost = running_cost / running_qty
+                                cost_to_reduce = trade["quantity"] * avg_cost
+                                running_cost -= cost_to_reduce
                             running_qty -= trade["quantity"]
-                            running_cost -= (trade["amount"] - trade["fee"])
                         elif trade["direction"] == "dividend":
                             running_qty += trade["quantity"]
 
+            prev_qty = 0  # 昨日持仓量，用于判断昨日是否有持仓
+            
             for snap in snaps:
                 d = snap.date
 
@@ -427,8 +511,12 @@ def recalc_snapshots_pnl(code: str = None):
                             running_qty += trade["quantity"]
                             running_cost += trade["amount"]
                         elif trade["direction"] == "sell":
+                            # FIFO: 按当前成本单价减少成本（与 recalc_position 一致）
+                            if running_qty > 0:
+                                avg_cost = running_cost / running_qty
+                                cost_to_reduce = trade["quantity"] * avg_cost
+                                running_cost -= cost_to_reduce
                             running_qty -= trade["quantity"]
-                            running_cost -= (trade["amount"] - trade["fee"])
                         elif trade["direction"] == "dividend":
                             # 分红再投资：增加份额，不增加成本
                             running_qty += trade["quantity"]
@@ -439,6 +527,7 @@ def recalc_snapshots_pnl(code: str = None):
                     snap.daily_pnl = 0
                     snap.total_pnl = 0
                     prev_close = snap.close
+                    prev_qty = 0
                     continue
 
                 # 有持仓
@@ -446,12 +535,15 @@ def recalc_snapshots_pnl(code: str = None):
                 snap.total_pnl = round(snap.market_value - running_cost, 4)
 
                 # 日收益 = (今日收盘 - 昨日收盘) * 持仓量
-                if prev_close and prev_close > 0:
+                # 只有昨天也有持仓时，才计算价格变动带来的收益
+                if prev_close and prev_close > 0 and prev_qty > 0:
                     snap.daily_pnl = round((snap.close - prev_close) * running_qty, 4)
                 else:
+                    # 昨天无持仓（今日刚买入），日收益为0
                     snap.daily_pnl = 0
 
                 prev_close = snap.close
+                prev_qty = running_qty
 
             db.commit()
             print(f"  {c} pnl 重算完成")
@@ -460,54 +552,109 @@ def recalc_snapshots_pnl(code: str = None):
 
 
 def fetch_and_save_daily(scheduler_ctx=None):
-    """定时任务：拉取所有持仓的当日行情并保存快照"""
+    """定时任务：从 daily_snapshots 取T-1最新价格更新 current_price，不获取实时价格
+    
+    当日数据在收盘后由 fetch_and_save_history 统一同步（只到T-1）
+    """
     from database import SessionLocal
-    from models import Position, DailySnapshot
+    from models import Position, DailySnapshot, SyncLog
 
     db = SessionLocal()
+    updated_count = 0
     try:
         positions = db.query(Position).all()
-        today = date.today()
+        now = datetime.now()
 
         for pos in positions:
-            time.sleep(0.3)  # 限速
             try:
-                prices = get_hist_prices(pos.code, today.strftime("%Y%m%d"), today.strftime("%Y%m%d"))
-                if not prices:
-                    latest = get_latest_price(pos.code)
-                    if latest:
-                        prices = [{"date": today.strftime("%Y-%m-%d"), "close": latest, "open": latest, "high": latest, "low": latest}]
-
-                if not prices:
-                    continue
-
-                _save_snapshots(db, pos.code, prices)
-
-                p = prices[0]
-                pos.current_price = p["close"]
-                pos.updated_at = datetime.now()
+                # 从 daily_snapshots 取最新价格（T-1）
+                latest_snap = db.query(DailySnapshot).filter(
+                    DailySnapshot.code == pos.code
+                ).order_by(DailySnapshot.date.desc()).first()
+                
+                if latest_snap and latest_snap.close:
+                    pos.current_price = latest_snap.close
+                    pos.updated_at = now
+                    updated_count += 1
             except Exception as e:
                 print(f"处理持仓 {pos.code} 失败: {e}")
                 continue
 
         db.commit()
+        
+        # 记录同步日志
+        sync_log = SyncLog(sync_type="daily", synced_at=datetime.now(), record_count=updated_count)
+        db.add(sync_log)
+        db.commit()
+        print(f"定时任务完成：更新了 {updated_count} 个持仓的 current_price")
     finally:
         db.close()
 
-    # 重算 pnl
-    recalc_snapshots_pnl()
+
+def sync_single_position_history(code: str, db=None):
+    """同步单个持仓的全部历史行情数据（从上市到昨天T-1）
+    
+    用于新增持仓时自动补全历史数据
+    """
+    from database import SessionLocal
+    from models import Position, DailySnapshot
+    
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
+    try:
+        pos = db.query(Position).filter(Position.code == code).first()
+        if not pos:
+            print(f"持仓 {code} 不存在")
+            return
+        
+        today = date.today()
+        yesterday = today - timedelta(days=1)
+        
+        # 拉取全部历史数据（只到昨天，避免实时数据不完整）
+        print(f"同步 {code}({pos.short_name or pos.name}) 全部历史数据...")
+        prices = get_hist_prices(code, "19000101", yesterday.strftime("%Y%m%d"))
+        
+        if not prices:
+            print(f"  {code} 无历史数据")
+            return
+        
+        saved = _save_snapshots(db, code, prices)
+        print(f"  {code} 同步完成，共 {saved} 条数据")
+        
+        # 更新当前价格（用昨天的收盘价）
+        latest = prices[-1] if prices else None
+        if latest:
+            pos.current_price = latest["close"]
+            pos.updated_at = datetime.now()
+        
+        db.commit()
+        
+        # 重算 pnl
+        recalc_snapshots_pnl(code)
+        
+    except Exception as e:
+        print(f"同步 {code} 历史数据失败: {e}")
+        db.rollback()
+    finally:
+        if should_close:
+            db.close()
 
 
 def fetch_and_save_history():
-    """同步所有持仓的历史行情数据到 daily_snapshots（增量：只拉缺失区间的新数据）"""
+    """同步所有持仓的历史行情数据到 daily_snapshots（增量：只拉缺失区间的新数据，只到T-1）"""
     from database import SessionLocal
-    from models import Position, DailySnapshot, Trade
+    from models import Position, DailySnapshot, Trade, SyncLog
     from sqlalchemy import func
 
     db = SessionLocal()
+    total_saved = 0
     try:
         positions = db.query(Position).all()
         today = date.today()
+        yesterday = today - timedelta(days=1)  # 只同步到昨天
 
         for pos in positions:
             time.sleep(0.5)  # 限速
@@ -531,24 +678,24 @@ def fetch_and_save_history():
                 gaps = []  # [(start, end, mode)]
 
                 if not first_snap:
-                    # 完全没有数据：拉全量（覆盖最早交易）
+                    # 完全没有数据：拉全量（覆盖最早交易，只到昨天）
                     gaps.append((pos_start.strftime("%Y%m%d"),
-                                 (today + timedelta(days=1)).strftime("%Y%m%d"), "全量"))
+                                 yesterday.strftime("%Y%m%d"), "全量"))
                 else:
                     # 有数据，检查前面是否有缺口
                     if first_snap.date > pos_start:
                         gaps.append((pos_start.strftime("%Y%m%d"),
                                      first_snap.date.strftime("%Y%m%d"), "补历史"))
-                    # 检查后面是否有缺口（最晚记录是否到今天）
-                    if last_snap.date < today:
+                    # 检查后面是否有缺口（最晚记录是否到昨天）
+                    if last_snap.date < yesterday:
                         gaps.append(((last_snap.date + timedelta(days=1)).strftime("%Y%m%d"),
-                                     (today + timedelta(days=1)).strftime("%Y%m%d"), "增量"))
+                                     yesterday.strftime("%Y%m%d"), "增量"))
 
                 if not gaps:
                     print(f"  {pos.code}({pos.short_name or pos.name}) 数据已完整，跳过")
                     continue
 
-                total_saved = 0
+                pos_saved = 0
                 for start_date, end_date, mode in gaps:
                     prices = get_hist_prices(pos.code, start_date, end_date)
                     if not prices:
@@ -556,11 +703,12 @@ def fetch_and_save_history():
                         continue
 
                     saved = _save_snapshots(db, pos.code, prices)
+                    pos_saved += saved
                     total_saved += saved
                     print(f"  {pos.code}({pos.short_name or pos.name}) {mode}同步 {len(prices)} 条, 新增 {saved} 条")
 
-                # 更新当前价格
-                if total_saved > 0:
+                # 更新当前价格（用昨天的收盘价）
+                if pos_saved > 0:
                     latest = db.query(DailySnapshot).filter(
                         DailySnapshot.code == pos.code
                     ).order_by(DailySnapshot.date.desc()).first()
@@ -572,6 +720,11 @@ def fetch_and_save_history():
                 print(f"同步历史 {pos.code} 失败: {e}")
                 continue
 
+        db.commit()
+        
+        # 记录同步日志
+        sync_log = SyncLog(sync_type="history", synced_at=datetime.now(), record_count=total_saved)
+        db.add(sync_log)
         db.commit()
     finally:
         db.close()

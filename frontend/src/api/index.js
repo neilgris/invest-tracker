@@ -32,6 +32,8 @@ export const getFundInfo = (code, date) => api.get(`/quotes/fund-info/${code}`, 
 
 // --- 行情同步 ---
 export const syncQuotes = () => api.post('/quotes/sync')
+export const getSyncProgress = (taskId) => api.get(`/quotes/sync-progress/${taskId}`)
+export const getLastSync = () => api.get('/quotes/last-sync')
 
 // --- 分红 ---
 export const detectDividends = (code) => api.get('/quotes/dividends', { params: { code } })
@@ -40,6 +42,8 @@ export const confirmDividends = (dividends) => api.post('/quotes/dividends/confi
 // --- 统计 ---
 export const getMonthlyStats = (year) => api.get('/stats/monthly', { params: { year } })
 export const getYearlyStats = () => api.get('/stats/yearly')
+export const getMonthlyPositionDetails = (year, month) => api.get(`/stats/monthly/${year}/${month}/positions`)
+export const getYearlyPositionDetails = (year) => api.get(`/stats/yearly/${year}/positions`)
 
 export default api
 

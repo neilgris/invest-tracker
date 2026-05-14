@@ -35,7 +35,7 @@
       </el-col>
       <el-col :span="6">
         <el-card shadow="hover">
-          <div class="stat-label">今日盈亏</div>
+          <div class="stat-label">{{ latestDateLabel }}盈亏</div>
           <div class="stat-value" :class="overview.daily_pnl >= 0 ? 'profit' : 'loss'">
             {{ overview.daily_pnl >= 0 ? '+' : '' }}¥{{ overview.daily_pnl?.toLocaleString() }}
           </div>
@@ -52,16 +52,22 @@
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
               <span>持仓列表</span>
-              <el-button type="primary" size="small" @click="syncQuotes" :loading="syncing">同步行情</el-button>
+              <div style="display: flex; align-items: center; gap: 12px">
+                <span v-if="lastSync && !syncing" style="font-size: 12px; color: #909399">
+                  数据更新: {{ formatLastSync(lastSync) }}
+                </span>
+                <div v-if="syncing && syncProgress" style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #409EFF;">
+                  <el-progress :percentage="syncPercent" :stroke-width="4" style="width: 80px" />
+                  <span>{{ syncProgress.message || '同步中...' }}</span>
+                </div>
+                <el-button type="primary" size="small" @click="syncQuotes" :loading="syncing">同步行情</el-button>
+              </div>
             </div>
           </template>
           <el-table :data="sortedPositions" stripe style="width: 100%" @row-click="goDetail" @sort-change="handleSort" :default-sort="{ prop: 'total_pnl', order: 'descending' }" v-loading="loading">
             <el-table-column prop="code" label="代码" width="100" />
             <el-table-column prop="name" label="名称" width="120">
               <template #default="{ row }">{{ row.short_name || row.name }}</template>
-            </el-table-column>
-            <el-table-column label="持仓数量" width="100">
-              <template #default="{ row }">{{ row.quantity?.toFixed(2) }}</template>
             </el-table-column>
             <el-table-column label="成本价" width="100">
               <template #default="{ row }">{{ row.avg_cost?.toFixed(4) }}</template>
@@ -80,7 +86,7 @@
                 </span>
               </template>
             </el-table-column>
-            <el-table-column label="今日盈亏" width="120" sortable="custom" prop="daily_pnl">
+            <el-table-column :label="latestDateLabel + '盈亏'" width="120" sortable="custom" prop="daily_pnl">
               <template #default="{ row }">
                 <span :class="row.daily_pnl >= 0 ? 'profit' : 'loss'">
                   {{ row.daily_pnl >= 0 ? '+' : '' }}¥{{ row.daily_pnl?.toLocaleString() }}
@@ -151,11 +157,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import VChart from 'vue-echarts'
-import { getPositions, getOverview, syncQuotes as syncApi, updatePositionCategory, getCategoryStats } from '../api'
+import { getPositions, getOverview, syncQuotes as syncApi, getSyncProgress, updatePositionCategory, getCategoryStats, getLastSync } from '../api'
 
 const router = useRouter()
 const positions = ref([])
@@ -163,11 +169,33 @@ const overview = ref({})
 const syncing = ref(false)
 const loading = ref(false)
 const categoryStats = ref([])
+const lastSync = ref(null)
+const syncProgress = ref(null)
+const syncTaskId = ref(null)
+let syncPollInterval = null
+
+// 同步进度百分比
+const syncPercent = computed(() => {
+  if (!syncProgress.value) return 0
+  const { completed, total } = syncProgress.value
+  if (!total) return 0
+  return Math.round((completed / total) * 100)
+})
 const categoryOptions = ['主线成长', '主动混合', '现金防御', '对冲压舱', '固收缓冲', '宽基', '主题']
 const pieMode = ref('category')  // 'position' | 'category'
 
 // 排序配置：默认按总收益降序
 const sortConfig = ref({ prop: 'total_pnl', order: 'descending' })
+
+// 最新数据日期标签
+const latestDateLabel = computed(() => {
+  if (!overview.value?.latest_date) return '今日'
+  const d = new Date(overview.value.latest_date)
+  const today = new Date()
+  const isToday = d.toDateString() === today.toDateString()
+  if (isToday) return '今日'
+  return `${d.getMonth() + 1}/${d.getDate()}`
+})
 
 // 排序后的持仓列表
 const sortedPositions = computed(() => {
@@ -240,6 +268,10 @@ const loadData = async () => {
     // 最后加载分类统计（饼图数据）
     const catRes = await getCategoryStats()
     categoryStats.value = catRes.data
+    
+    // 加载上次同步时间
+    const syncRes = await getLastSync()
+    lastSync.value = syncRes.data
   } catch (e) {
     console.error('加载数据失败', e)
     ElMessage.error('加载数据失败')
@@ -258,12 +290,54 @@ const handleCategoryChange = async (row, category) => {
   }
 }
 
+const pollSyncProgress = async () => {
+  if (!syncTaskId.value) return
+  
+  try {
+    const res = await getSyncProgress(syncTaskId.value)
+    if (res.data.ok) {
+      syncProgress.value = res.data.progress
+      
+      // 同步完成或失败
+      if (['completed', 'failed'].includes(res.data.progress.status)) {
+        clearInterval(syncPollInterval)
+        syncPollInterval = null
+        
+        if (res.data.progress.status === 'completed') {
+          ElMessage.success(res.data.progress.message || '同步完成')
+          await loadData()
+        } else {
+          ElMessage.error(res.data.progress.message || '同步失败')
+        }
+        
+        setTimeout(() => {
+          syncing.value = false
+          syncProgress.value = null
+          syncTaskId.value = null
+        }, 2000)
+      }
+    }
+  } catch (e) {
+    console.error('获取进度失败', e)
+  }
+}
+
 const syncQuotes = async () => {
   syncing.value = true
+  syncProgress.value = null
+  
   try {
-    await syncApi()
-    await loadData()
-  } finally {
+    const res = await syncApi()
+    if (res.data.ok && res.data.task_id) {
+      syncTaskId.value = res.data.task_id
+      // 开始轮询进度
+      syncPollInterval = setInterval(pollSyncProgress, 500)
+    } else {
+      ElMessage.error(res.data.message || '启动同步失败')
+      syncing.value = false
+    }
+  } catch (e) {
+    ElMessage.error('同步失败: ' + (e.response?.data?.detail || e.message))
     syncing.value = false
   }
 }
@@ -276,7 +350,37 @@ const handleSort = ({ prop, order }) => {
   sortConfig.value = { prop, order }
 }
 
+// 格式化同步时间显示
+const formatLastSync = (syncData) => {
+  if (!syncData || !syncData.last_sync) return '未同步'
+  
+  const syncTime = new Date(syncData.last_sync)
+  const now = new Date()
+  const diffMs = now - syncTime
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMs / 3600000)
+  const diffDays = Math.floor(diffMs / 86400000)
+  
+  const timeStr = syncTime.toLocaleString('zh-CN', { 
+    month: 'short', 
+    day: 'numeric', 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  })
+  
+  if (diffMins < 1) return `刚刚 (${timeStr})`
+  if (diffMins < 60) return `${diffMins}分钟前 (${timeStr})`
+  if (diffHours < 24) return `${diffHours}小时前 (${timeStr})`
+  return `${diffDays}天前 (${timeStr})`
+}
+
 onMounted(loadData)
+
+onUnmounted(() => {
+  if (syncPollInterval) {
+    clearInterval(syncPollInterval)
+  }
+})
 </script>
 
 <style scoped>

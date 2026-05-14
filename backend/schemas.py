@@ -76,6 +76,7 @@ class OverviewOut(BaseModel):
     total_pnl_pct: float
     daily_pnl: float
     daily_pnl_pct: float
+    latest_date: Optional[str] = None  # 最新有数据日期
     position_count: int
 
 

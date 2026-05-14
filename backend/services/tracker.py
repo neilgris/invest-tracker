@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from models import Trade, Position, DailySnapshot
 from schemas import TradeCreate, TradeUpdate
 from datetime import datetime
+import time
 
 
 def _calc_quantity(amount: float, price: float, fee: float) -> float:
@@ -82,6 +83,11 @@ def recalc_position(db: Session, code: str):
 
 
 def create_trade(db: Session, trade: TradeCreate) -> Trade:
+    # 检查是否为新持仓（创建交易前）
+    from models import Position
+    existing_pos = db.query(Position).filter(Position.code == trade.code).first()
+    is_new_position = existing_pos is None
+
     # 自动推算quantity: (amount - fee) / price
     if trade.quantity is None:
         trade.quantity = _calc_quantity(trade.amount, trade.price, trade.fee or 0)
@@ -94,9 +100,20 @@ def create_trade(db: Session, trade: TradeCreate) -> Trade:
     recalc_position(db, trade.code)
     db.commit()
 
-    # 重算该代码的快照收益
-    from services.market import recalc_snapshots_pnl
-    recalc_snapshots_pnl(trade.code)
+    # 如果是新持仓，异步同步历史行情数据
+    if is_new_position:
+        print(f"检测到新持仓 {trade.code}，启动历史数据同步...")
+        import threading
+        from services.market import sync_single_position_history
+        # 使用后台线程避免阻塞用户
+        def sync_in_background():
+            time.sleep(0.5)  # 稍等确保事务提交
+            sync_single_position_history(trade.code)
+        threading.Thread(target=sync_in_background, daemon=True).start()
+    else:
+        # 重算该代码的快照收益
+        from services.market import recalc_snapshots_pnl
+        recalc_snapshots_pnl(trade.code)
 
     return db_trade
 
@@ -107,6 +124,21 @@ def update_trade(db: Session, trade_id: int, trade_update: TradeUpdate) -> Trade
         return None
 
     update_data = trade_update.model_dump(exclude_unset=True)
+
+    # 检查是否需要重新计算 quantity
+    # 如果 price/amount/fee 任一变了，且用户没有显式传 quantity，则自动重算
+    price_changed = 'price' in update_data
+    amount_changed = 'amount' in update_data
+    fee_changed = 'fee' in update_data
+    quantity_provided = 'quantity' in update_data
+
+    if (price_changed or amount_changed or fee_changed) and not quantity_provided:
+        # 使用更新后的值（如果没传就用原值）
+        new_price = update_data.get('price', db_trade.price)
+        new_amount = update_data.get('amount', db_trade.amount)
+        new_fee = update_data.get('fee', db_trade.fee)
+        update_data['quantity'] = _calc_quantity(new_amount, new_price, new_fee or 0)
+
     for key, value in update_data.items():
         setattr(db_trade, key, value)
 

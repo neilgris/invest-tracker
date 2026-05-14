@@ -44,18 +44,19 @@ def pearson_correlation(
     if len(merged) < 10:
         return {"ok": False, "message": f"有效数据点不足({len(merged)}), 至少10个"}
 
-    a = merged[f"{field}_a"].dropna().values
-    b = merged[f"{field}_b"].dropna().values
-    # 再对齐一次（dropna 后长度可能不同，取交集）
-    min_len = min(len(a), len(b))
-    a, b = a[:min_len], b[:min_len]
+    # 先统一 dropna（按行），确保日期对齐
+    merged = merged.dropna(subset=[f"{field}_a", f"{field}_b"])
+    if len(merged) < 10:
+        return {"ok": False, "message": f"有效数据点不足({len(merged)}), 至少10个"}
+    a = merged[f"{field}_a"].values
+    b = merged[f"{field}_b"].values
 
     r, p = stats.pearsonr(a, b)
     return {
         "ok": True,
         "correlation": round(float(r), 4),
         "p_value": round(float(p), 6),
-        "n": min_len,
+        "n": len(merged),
         "code_a": code_a,
         "code_b": code_b,
         "field": field,

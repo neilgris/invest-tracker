@@ -139,10 +139,24 @@
           </div>
         </el-form-item>
 
-        <el-form-item label="总金额">
-          <el-input-number v-model="form.amount" :precision="2" :min="0" style="width: 100%" />
-          <div v-if="form.price > 0 && form.amount > 0" class="el-form-item__tip" style="font-size: 12px; color: #909399; line-height: 1.5; margin-top: 4px">
-            预估数量：{{ ((form.amount - (form.fee || 0)) / form.price).toFixed(2) }} 份
+        <!-- 买入/卖出：输入份数，自动计算总金额 -->
+        <el-form-item v-if="form.direction === 'buy' || form.direction === 'sell'" label="份数">
+          <el-input-number v-model="form.quantity" :precision="2" :min="0" style="width: 100%" />
+          <div v-if="form.price > 0 && form.quantity > 0" class="el-form-item__tip" style="font-size: 12px; color: #909399; line-height: 1.5; margin-top: 4px">
+            <template v-if="form.direction === 'buy'">
+              预估金额：{{ (form.price * form.quantity).toFixed(2) }} 元 + 手续费 = {{ (form.price * form.quantity + (form.fee || 0)).toFixed(2) }} 元
+            </template>
+            <template v-else>
+              卖出总额：{{ (form.price * form.quantity).toFixed(2) }} 元，手续费 {{ (form.fee || 0).toFixed(2) }} 元，到账 {{ (form.price * form.quantity - (form.fee || 0)).toFixed(2) }} 元
+            </template>
+          </div>
+        </el-form-item>
+
+        <!-- 分红：输入份数（分红再投资） -->
+        <el-form-item v-if="form.direction === 'dividend'" label="份数">
+          <el-input-number v-model="form.quantity" :precision="2" :min="0" style="width: 100%" />
+          <div v-if="form.price > 0 && form.quantity > 0" class="el-form-item__tip" style="font-size: 12px; color: #909399; line-height: 1.5; margin-top: 4px">
+            分红金额：{{ (form.price * form.quantity).toFixed(2) }} 元（再投资）
           </div>
         </el-form-item>
 
@@ -256,7 +270,8 @@ const defaultForm = () => ({
   name: '',
   direction: 'buy',
   price: 0,
-  amount: 0,
+  quantity: 0,  // 买入时输入份数
+  amount: 0,    // 卖出/分红时输入金额
   trade_date: new Date().toISOString().slice(0, 10),
   fee: 0,
 })
@@ -329,6 +344,21 @@ const editTrade = (row) => {
   quickMode.value = false
   editId.value = row.id
   form.value = { ...row, trade_date: row.trade_date }
+  
+  // 买入/卖出/分红：从 amount 反推 quantity（用于编辑时显示）
+  if (row.price > 0) {
+    if (row.direction === 'buy') {
+      // 买入：amount = price * qty + fee
+      form.value.quantity = (row.amount - (row.fee || 0)) / row.price
+    } else if (row.direction === 'sell') {
+      // 卖出：amount = price * qty
+      form.value.quantity = row.amount / row.price
+    } else if (row.direction === 'dividend') {
+      // 分红：amount = 0，从数据库的 quantity 直接显示
+      form.value.quantity = row.quantity || 0
+    }
+  }
+  
   showDialog.value = true
 }
 
@@ -342,10 +372,24 @@ const removeTrade = async (id) => {
 const submitTrade = async () => {
   submitting.value = true
   try {
+    const payload = { ...form.value }
+    
+    // 买入/卖出/分红：根据单价、份数计算总金额
+    if (payload.direction === 'buy') {
+      // 买入：总金额 = 单价 × 份数 + 手续费
+      payload.amount = payload.price * payload.quantity + (payload.fee || 0)
+    } else if (payload.direction === 'sell') {
+      // 卖出：总金额 = 单价 × 份数（卖出总额，不含手续费）
+      payload.amount = payload.price * payload.quantity
+    } else if (payload.direction === 'dividend') {
+      // 分红：总金额 = 0（分红再投资不增加成本）
+      payload.amount = 0
+    }
+    
     if (isEdit.value) {
-      await updateTrade(editId.value, form.value)
+      await updateTrade(editId.value, payload)
     } else {
-      await createTrade(form.value)
+      await createTrade(payload)
     }
     ElMessage.success(isEdit.value ? '已更新' : '已添加')
     showDialog.value = false

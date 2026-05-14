@@ -109,8 +109,22 @@ def sync_l1_indexes():
 
 @router.post("/cache/sync-l2")
 def sync_l2_industry():
-    """同步 L2 行业板块"""
+    """同步 L2 行业板块（申万指数）"""
     from services.analysis.data_fetcher import sync_l2_industry as _sync
+    return _sync()
+
+
+@router.post("/cache/sync-l2-em")
+def sync_l2_industry_em():
+    """同步 L2 行业板块（东方财富）- 已废弃，请使用THS版本"""
+    from services.analysis.data_fetcher import sync_l2_industry_em as _sync
+    return _sync()
+
+
+@router.post("/cache/sync-l2-ths")
+def sync_l2_industry_ths():
+    """同步 L2 行业板块（同花顺）- 分页获取，每5秒一次"""
+    from services.analysis.data_fetcher import sync_l2_industry_ths as _sync
     return _sync()
 
 
@@ -118,6 +132,13 @@ def sync_l2_industry():
 def sync_l3_concept():
     """同步 L3 概念板块"""
     from services.analysis.data_fetcher import sync_l3_concept as _sync
+    return _sync()
+
+
+@router.post("/cache/sync-l2-em")
+def sync_l2_em():
+    """同步 L2 行业板块（东方财富源）"""
+    from services.analysis.data_fetcher import sync_l2_industry_em as _sync
     return _sync()
 
 

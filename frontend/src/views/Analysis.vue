@@ -101,6 +101,12 @@
                     <el-tag size="small" :type="assetTypeTag(row.asset_type)">{{ assetTypeLabel(row.asset_type) }}</el-tag>
                   </template>
                 </el-table-column>
+                <el-table-column prop="source" label="来源" width="70">
+                  <template #default="{ row }">
+                    <el-tag v-if="row.source" size="small" type="info">{{ sourceLabel(row.source) }}</el-tag>
+                    <span v-else style="color: #909399; font-size: 12px">-</span>
+                  </template>
+                </el-table-column>
               </el-table>
             </el-card>
           </el-col>
@@ -109,6 +115,36 @@
 
       <!-- Tab 2: 相关性分析 -->
       <el-tab-pane label="相关性分析" name="correlation">
+        <!-- 全局日期范围设置 -->
+        <el-card shadow="hover" style="margin-bottom: 20px">
+          <template #header>
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <span>分析时间范围</span>
+              <div>
+                <el-radio-group v-model="globalDateRange.preset" size="small" @change="onDatePresetChange">
+                  <el-radio-button label="1y">近1年</el-radio-button>
+                  <el-radio-button label="3y">近3年</el-radio-button>
+                  <el-radio-button label="5y">近5年</el-radio-button>
+                  <el-radio-button label="10y">近10年</el-radio-button>
+                  <el-radio-button label="custom">自定义</el-radio-button>
+                </el-radio-group>
+              </div>
+            </div>
+          </template>
+          <el-form :inline="true">
+            <el-form-item label="起始日期">
+              <el-date-picker v-model="globalDateRange.start" type="date" placeholder="起始日期" format="YYYY-MM-DD" value-format="YYYY-MM-DD" :disabled="globalDateRange.preset !== 'custom'" />
+            </el-form-item>
+            <el-form-item label="结束日期">
+              <el-date-picker v-model="globalDateRange.end" type="date" placeholder="结束日期" format="YYYY-MM-DD" value-format="YYYY-MM-DD" :disabled="globalDateRange.preset !== 'custom'" />
+            </el-form-item>
+            <el-form-item>
+              <el-tag v-if="globalDateRange.start && globalDateRange.end" type="info" size="small">
+                {{ globalDateRange.start }} ~ {{ globalDateRange.end }}
+              </el-tag>
+            </el-form-item>
+          </el-form>
+        </el-card>
         <el-row :gutter="20">
           <el-col :span="8">
             <el-card shadow="hover" style="margin-bottom: 20px">
@@ -291,9 +327,31 @@
               <template #header>
                 <span>选择资产</span>
               </template>
-              <el-select v-model="dataViewForm.code" placeholder="选择资产" style="width: 100%" @change="loadDataView">
-                <el-option v-for="item in cacheAssetOptions" :key="item.value" :label="item.label" :value="item.value" />
+              <!-- 一级筛选：资产类型 -->
+              <el-select v-model="dataViewForm.assetType" placeholder="选择类型" style="width: 100%; margin-bottom: 10px" @change="onAssetTypeChange">
+                <el-option label="全部" value="all" />
+                <el-option label="指数" value="index" />
+                <el-option label="行业板块" value="sector_industry" />
+                <el-option label="概念板块" value="sector_concept" />
+                <el-option label="ETF" value="etf" />
+                <el-option label="个股" value="stock" />
               </el-select>
+              <!-- 二级选择：具体资产 + 左右切换 -->
+              <div style="display: flex; align-items: center; gap: 8px">
+                <el-button size="small" @click="prevAsset" :disabled="!canPrevAsset">
+                  <el-icon><Arrow-Left /></el-icon>
+                </el-button>
+                <el-select-v2
+                  v-model="dataViewForm.code"
+                  :options="filteredAssetOptions"
+                  placeholder="选择资产"
+                  style="flex: 1"
+                  @change="loadDataView"
+                />
+                <el-button size="small" @click="nextAsset" :disabled="!canNextAsset">
+                  <el-icon><Arrow-Right /></el-icon>
+                </el-button>
+              </div>
               <el-divider />
               <div v-if="dataStats.exists" style="font-size: 13px; color: #606266">
                 <p><strong>统计概览</strong></p>
@@ -324,6 +382,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import VChart from 'vue-echarts'
 import {
   analysisCacheStatus, analysisCacheSync, analysisCacheSyncBatch, analysisCacheProgress,
@@ -353,7 +412,64 @@ let progressTimer = null
 // 同步表单
 const syncForm = ref({ code: '', asset_type: 'index' })
 
-// 相关性表单
+// 全局日期范围（相关性分析页面共用）
+const globalDateRange = ref({
+  preset: '5y',
+  start: '',
+  end: ''
+})
+
+// 根据预设计算日期范围
+const calcDateRange = (preset) => {
+  const end = new Date()
+  const endStr = end.toISOString().split('T')[0]
+  let startStr = ''
+  switch (preset) {
+    case '1y':
+      startStr = new Date(end.getFullYear() - 1, end.getMonth(), end.getDate()).toISOString().split('T')[0]
+      break
+    case '3y':
+      startStr = new Date(end.getFullYear() - 3, end.getMonth(), end.getDate()).toISOString().split('T')[0]
+      break
+    case '5y':
+      startStr = new Date(end.getFullYear() - 5, end.getMonth(), end.getDate()).toISOString().split('T')[0]
+      break
+    case '10y':
+      startStr = new Date(end.getFullYear() - 10, end.getMonth(), end.getDate()).toISOString().split('T')[0]
+      break
+    case 'custom':
+      return { start: globalDateRange.value.start, end: globalDateRange.value.end }
+    default:
+      return { start: null, end: endStr }
+  }
+  return { start: startStr, end: endStr }
+}
+
+// 预设变化时自动更新日期
+const onDatePresetChange = (preset) => {
+  if (preset !== 'custom') {
+    const { start, end } = calcDateRange(preset)
+    globalDateRange.value.start = start
+    globalDateRange.value.end = end
+  }
+}
+
+// 初始化默认日期范围
+onMounted(() => {
+  const { start, end } = calcDateRange('5y')
+  globalDateRange.value.start = start
+  globalDateRange.value.end = end
+})
+
+// 获取当前日期范围参数
+const getGlobalDateParams = () => {
+  const { start, end } = calcDateRange(globalDateRange.value.preset)
+  return {
+    start_date: start,
+    end_date: end
+  }
+}
+
 const pearsonForm = ref({ code_a: '000001', code_b: '399001' })
 const pearsonResult = ref({})
 
@@ -370,7 +486,7 @@ const seasonResult = ref({})
 const momentumForm = ref({ code: '000001', lookback: 20, hold: 5 })
 
 // 数据查看
-const dataViewForm = ref({ code: '' })
+const dataViewForm = ref({ code: '', assetType: 'all' })
 const dataStats = ref({ exists: false })
 const klineData = ref([])
 const distData = ref({ bins: [], freq: [] })
@@ -386,8 +502,46 @@ const reportResult = ref({})
 // 资产选项（从缓存状态生成）
 const cacheAssetOptions = computed(() => {
   if (!Array.isArray(cacheAssets.value)) return []
-  return cacheAssets.value.map(a => ({ label: `${a.code} - ${a.name || assetTypeLabel(a.asset_type)}`, value: a.code }))
+  return cacheAssets.value.map(a => ({ label: `${a.name || assetTypeLabel(a.asset_type)} (${a.code})`, value: a.code, assetType: a.asset_type }))
 })
+
+// 根据类型筛选后的资产选项
+const filteredAssetOptions = computed(() => {
+  if (dataViewForm.value.assetType === 'all') return cacheAssetOptions.value
+  return cacheAssetOptions.value.filter(a => a.assetType === dataViewForm.value.assetType)
+})
+
+// 当前资产索引
+const currentAssetIndex = computed(() => {
+  return filteredAssetOptions.value.findIndex(a => a.value === dataViewForm.value.code)
+})
+
+// 是否可以切换
+const canPrevAsset = computed(() => currentAssetIndex.value > 0)
+const canNextAsset = computed(() => currentAssetIndex.value >= 0 && currentAssetIndex.value < filteredAssetOptions.value.length - 1)
+
+// 切换资产
+const prevAsset = () => {
+  const idx = currentAssetIndex.value
+  if (idx > 0) {
+    dataViewForm.value.code = filteredAssetOptions.value[idx - 1].value
+    loadDataView()
+  }
+}
+const nextAsset = () => {
+  const idx = currentAssetIndex.value
+  if (idx >= 0 && idx < filteredAssetOptions.value.length - 1) {
+    dataViewForm.value.code = filteredAssetOptions.value[idx + 1].value
+    loadDataView()
+  }
+}
+
+// 资产类型改变时重置选择
+const onAssetTypeChange = () => {
+  dataViewForm.value.code = ''
+  dataStats.value = { exists: false }
+  klineData.value = []
+}
 
 // 相关矩阵表格数据
 const matrixTableData = computed(() => {
@@ -459,6 +613,10 @@ const assetTypeLabel = (type) => {
   const map = { index: '指数', sector_industry: '行业', sector_concept: '概念', etf: 'ETF', stock: '个股' }
   return map[type] || type
 }
+const sourceLabel = (source) => {
+  const map = { sw: '申万', em: '东财', csindex: '中证', wind: 'Wind', ths: '同花顺' }
+  return map[source] || source
+}
 
 // API调用
 const loadCacheStatus = async () => {
@@ -496,7 +654,7 @@ const startProgressPolling = () => {
     } catch (e) {
       // ignore
     }
-  }, 500)
+  }, 2000)
 }
 
 const stopProgressPolling = () => {
@@ -572,8 +730,16 @@ const syncSingle = async () => {
 
 const calcPearson = async () => {
   loading.value.pearson = true
+  pearsonResult.value = {}  // 清空旧结果
   try {
-    pearsonResult.value = (await analysisPearson(pearsonForm.value)).data
+    const { start_date, end_date } = getGlobalDateParams()
+    const params = {
+      code_a: pearsonForm.value.code_a,
+      code_b: pearsonForm.value.code_b,
+      start_date,
+      end_date
+    }
+    pearsonResult.value = (await analysisPearson(params)).data
   } catch (e) {
     ElMessage.error('计算失败')
   } finally {
@@ -584,8 +750,15 @@ const calcPearson = async () => {
 const calcMatrix = async () => {
   if (matrixForm.value.codes.length < 2) return ElMessage.warning('至少选择2个资产')
   loading.value.matrix = true
+  matrixResult.value = {}  // 清空旧结果
   try {
-    matrixResult.value = (await analysisCorrMatrix(matrixForm.value)).data
+    const { start_date, end_date } = getGlobalDateParams()
+    const params = {
+      codes: matrixForm.value.codes,
+      start_date,
+      end_date
+    }
+    matrixResult.value = (await analysisCorrMatrix(params)).data
   } catch (e) {
     ElMessage.error('计算失败')
   } finally {

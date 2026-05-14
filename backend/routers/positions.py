@@ -12,21 +12,21 @@ import math
 router = APIRouter(prefix="/api/positions", tags=["持仓管理"])
 
 
-def enrich_position(pos: Position, db: Session, today_snaps: dict = None) -> dict:
+def enrich_position(pos: Position, db: Session, latest_snaps: dict = None, latest_date: date = None) -> dict:
     """计算持仓的衍生字段"""
     mv = pos.quantity * pos.current_price if pos.current_price else pos.total_cost
     total_pnl = mv - pos.total_cost
     total_pnl_pct = (total_pnl / pos.total_cost * 100) if pos.total_cost > 0 else 0
 
-    # 当日盈亏 - 从预加载的快照字典获取
-    if today_snaps is not None:
-        snap = today_snaps.get(pos.code)
+    # 最新有数据日期的盈亏 - 从预加载的快照字典获取
+    if latest_snaps is not None:
+        snap = latest_snaps.get(pos.code)
     else:
-        today = date.today()
-        snap = db.query(DailySnapshot).filter(
-            DailySnapshot.code == pos.code,
-            DailySnapshot.date == today
-        ).first()
+        # 获取该持仓最新有数据的日期
+        latest_snap = db.query(DailySnapshot).filter(
+            DailySnapshot.code == pos.code
+        ).order_by(DailySnapshot.date.desc()).first()
+        snap = latest_snap
     daily_pnl = snap.daily_pnl if snap and snap.daily_pnl else 0
     daily_pnl_pct = (daily_pnl / pos.total_cost * 100) if pos.total_cost > 0 else 0
 
@@ -82,16 +82,19 @@ def list_positions(db: Session = Depends(get_db)):
     if not positions:
         return []
 
-    # 预加载所有今日快照，避免N+1查询
-    today = date.today()
+    # 获取所有持仓的最新数据日期
     codes = [p.code for p in positions]
-    snaps = db.query(DailySnapshot).filter(
-        DailySnapshot.code.in_(codes),
-        DailySnapshot.date == today
-    ).all()
-    today_snaps = {s.code: s for s in snaps}
+    latest_date_by_code = {}
+    latest_snaps = {}
+    for code in codes:
+        snap = db.query(DailySnapshot).filter(
+            DailySnapshot.code == code
+        ).order_by(DailySnapshot.date.desc()).first()
+        if snap:
+            latest_date_by_code[code] = snap.date
+            latest_snaps[code] = snap
 
-    return [enrich_position(p, db, today_snaps) for p in positions]
+    return [enrich_position(p, db, latest_snaps) for p in positions]
 
 
 @router.get("/overview", response_model=OverviewOut)
