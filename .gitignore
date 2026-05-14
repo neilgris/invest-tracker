@@ -32,4 +32,6 @@ backend/static/assets/
 backend/static/index.html
 
 # Test files (temporary)
-test_*.py
+
+# Tests (keep in repo)
+!tests/
