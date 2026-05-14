@@ -26,3 +26,10 @@ venv/
 dist/
 build/
 backend/invest_tracker.db
+
+# Build outputs
+backend/static/assets/
+backend/static/index.html
+
+# Test files (temporary)
+test_*.py
