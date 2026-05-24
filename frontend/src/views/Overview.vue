@@ -61,13 +61,14 @@
                   <span>{{ syncProgress.message || '同步中...' }}</span>
                 </div>
                 <el-button type="primary" size="small" @click="syncQuotes" :loading="syncing">同步行情</el-button>
+                <el-button size="small" @click="exportExcel">导出Excel</el-button>
               </div>
             </div>
           </template>
           <el-table :data="sortedPositions" stripe style="width: 100%" @row-click="goDetail" @sort-change="handleSort" :default-sort="{ prop: 'total_pnl', order: 'descending' }" v-loading="loading">
             <el-table-column prop="code" label="代码" width="100" />
             <el-table-column prop="name" label="名称" width="120">
-              <template #default="{ row }">{{ row.short_name || row.name }}</template>
+              <template #default="{ row }">{{ row.name }}</template>
             </el-table-column>
             <el-table-column label="成本价" width="100">
               <template #default="{ row }">{{ row.avg_cost?.toFixed(4) }}</template>
@@ -77,6 +78,9 @@
             </el-table-column>
             <el-table-column label="市值" width="120" sortable="custom" prop="market_value">
               <template #default="{ row }">¥{{ row.market_value?.toLocaleString() }}</template>
+            </el-table-column>
+            <el-table-column label="占比" width="80" sortable="custom" prop="weight">
+              <template #default="{ row }">{{ row.weight }}%</template>
             </el-table-column>
             <el-table-column label="总收益" width="140" sortable="custom" prop="total_pnl">
               <template #default="{ row }">
@@ -161,6 +165,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import VChart from 'vue-echarts'
+import * as XLSX from 'xlsx'
 import { getPositions, getOverview, syncQuotes as syncApi, getSyncProgress, updatePositionCategory, getCategoryStats, getLastSync } from '../api'
 
 const router = useRouter()
@@ -231,7 +236,7 @@ const pieOption = computed(() => {
   if (pieMode.value === 'position') {
     data = positions.value
       .map(p => ({
-        name: `${p.short_name || p.name}(${p.code})`,
+        name: `${p.name}(${p.code})`,
         value: p.market_value || 0,
       }))
       .sort((a, b) => b.value - a.value)
@@ -348,6 +353,31 @@ const goDetail = (row) => {
 
 const handleSort = ({ prop, order }) => {
   sortConfig.value = { prop, order }
+}
+
+// 导出Excel
+const exportExcel = () => {
+  // 准备数据：代码用关联ETF代码（如果有），去掉日盈亏和分类
+  const exportData = sortedPositions.value.map(p => ({
+    '代码': p.linked_code || p.code,
+    '名称': p.name,
+    '成本价': p.avg_cost,
+    '现价': p.current_price,
+    '市值': p.market_value,
+    '占比(%)': p.weight,
+    '总收益': p.total_pnl,
+    '收益率(%)': p.total_pnl_pct,
+  }))
+  
+  // 创建工作簿
+  const ws = XLSX.utils.json_to_sheet(exportData)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, '持仓列表')
+  
+  // 下载文件
+  const dateStr = new Date().toISOString().slice(0, 10)
+  XLSX.writeFile(wb, `持仓列表_${dateStr}.xlsx`)
+  ElMessage.success('导出成功')
 }
 
 // 格式化同步时间显示

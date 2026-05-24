@@ -7,7 +7,8 @@ L2 行业板块（~90个，必拉）
 L3 概念板块（~400个，按需）
 L4 ETF（宽基+行业必拉，主题按需）
 L5 个股（纯按需）
-L6 市场情绪（P1后）
+L6 国际大宗商品（黄金/原油/白银等，必拉）
+L7 市场情绪（P1后）
 """
 
 import akshare as ak
@@ -190,6 +191,36 @@ def _ak_sector_hist(code: str, start: str, end: str) -> pd.DataFrame | None:
     return _try_sw_sector_hist(code, start, end)
 
 
+def _ak_commodity_hist(code: str, start: str, end: str) -> pd.DataFrame | None:
+    """拉取国际大宗商品历史行情（外盘期货）"""
+    try:
+        df = ak.futures_foreign_hist(symbol=code)
+        if df is None or df.empty:
+            return None
+        
+        # 列名标准化
+        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+        df = df.rename(columns={
+            "open": "open", "close": "close", "high": "high",
+            "low": "low", "volume": "volume"
+        })
+        
+        # 计算涨跌幅（如果接口没返回）
+        if "pct_change" not in df.columns:
+            df["pct_change"] = df["close"].pct_change() * 100
+        
+        # 添加turnover列（外盘期货通常没有成交额）
+        df["turnover"] = None
+        
+        # 筛选日期范围
+        df = df[(df["date"] >= start) & (df["date"] <= end)]
+        
+        return df[["date", "open", "close", "high", "low", "volume", "turnover", "pct_change"]]
+    except Exception as e:
+        print(f"[commodity] {code} 拉取失败: {e}")
+        return None
+
+
 def _try_sw_sector_hist(symbol: str, start: str, end: str, max_retries: int = 2) -> pd.DataFrame | None:
     """尝试拉取申万行业指数历史行情（带重试）"""
     for attempt in range(max_retries):
@@ -281,6 +312,8 @@ def _fetch_and_cache(
         df = _ak_sector_hist(code, s_start, s_end)
     elif asset_type == "fund":
         df = _ak_fund_nav_hist(code, s_start, s_end)
+    elif asset_type == "commodity":
+        df = _ak_commodity_hist(code, s_start, s_end)
     else:  # stock / etf / default
         df = _ak_stock_hist(code, s_start, s_end)
 
@@ -375,6 +408,22 @@ L4_ETF_BROAD = {
     "515030": "新能源车ETF",
 }
 
+# L6 国际大宗商品（主要品种）
+L6_COMMODITY_CODES = {
+    "GC": "COMEX黄金",
+    "SI": "COMEX白银",
+    "CL": "WTI原油",
+    "NG": "天然气",
+    "HG": "COMEX铜",
+    "XAU": "伦敦金",
+    "XAG": "伦敦银",
+    "S": "美黄豆",
+    "C": "美玉米",
+    "W": "美小麦",
+    "CAD": "美棉花",
+    "LHC": "瘦肉猪",
+}
+
 
 # ══════════════════════════════════════════════════════
 # 公开 API
@@ -384,12 +433,12 @@ def sync_single(code: str, asset_type: str = "stock",
                 start_date: date = None, end_date: date = None) -> dict:
     """
     拉取单个标的行情并缓存。
-    asset_type: index / sector_industry / sector_concept / etf / stock / fund
+    asset_type: index / sector_industry / sector_concept / etf / stock / fund / commodity
     默认 5 年数据（指数/ETF 拉更长），传 None 表示拉取全部历史。
     返回 {"ok": bool, "saved": int, "message": str}
     """
-    # sector/index 类型传 None 表示拉全部历史，不设置默认日期
-    if asset_type in ("sector_industry", "sector_concept", "index"):
+    # sector/index/commodity 类型传 None 表示拉全部历史，不设置默认日期
+    if asset_type in ("sector_industry", "sector_concept", "index", "commodity"):
         if start_date is None and end_date is None:
             # 拉全部历史，不限制日期
             pass
@@ -413,6 +462,9 @@ def sync_single(code: str, asset_type: str = "stock",
         meta = db.query(AssetMeta).filter(AssetMeta.code == code).first()
         if not meta:
             name = _get_name_from_cache(code)
+            # 大宗商品使用预定义名称
+            if asset_type == "commodity" and code in L6_COMMODITY_CODES:
+                name = L6_COMMODITY_CODES[code]
             db.add(AssetMeta(
                 code=code,
                 name=name or code,
@@ -435,8 +487,8 @@ def sync_batch(codes: list[str], asset_type: str = "stock",
     start_date / end_date 可选，默认 5 年。
     返回汇总报告。
     """
-    # sector 类型拉全部历史，其他按默认
-    if asset_type in ("sector_industry", "sector_concept"):
+    # sector/commodity 类型拉全部历史，其他按默认
+    if asset_type in ("sector_industry", "sector_concept", "commodity"):
         # 拉全部历史
         start_date, end_date = None, None
     else:
@@ -871,6 +923,79 @@ def sync_l3_concept() -> dict:
         db.close()
 
     return batch_result
+
+
+def sync_l6_commodity() -> dict:
+    """
+    同步 L6 国际大宗商品（主要品种）
+    - 黄金、白银、原油、铜等
+    - 拉取全部历史数据
+    """
+    codes = list(L6_COMMODITY_CODES.keys())
+    names = list(L6_COMMODITY_CODES.values())
+    total = len(codes)
+    
+    _set_progress("L6国际大宗商品同步", 0, total, "", f"开始同步 {total} 个品种...")
+    
+    db = SessionLocal()
+    results = []
+    total_saved = 0
+    
+    try:
+        for i, (code, name) in enumerate(zip(codes, names), 1):
+            _set_progress("L6国际大宗商品同步", i, total, code, f"正在同步 {name} ({i}/{total})")
+            print(f"[{i}/{total}] {code} {name}")
+            
+            try:
+                # 拉取全部历史
+                saved = _fetch_and_cache(db, code, "commodity", None, None)
+                
+                # 更新或创建元数据
+                meta = db.query(AssetMeta).filter(AssetMeta.code == code).first()
+                if not meta:
+                    db.add(AssetMeta(
+                        code=code,
+                        name=name,
+                        asset_type="commodity",
+                        category="国际大宗商品",
+                        source="global",
+                        is_cached=1
+                    ))
+                else:
+                    meta.name = name
+                    meta.asset_type = "commodity"
+                    meta.category = "国际大宗商品"
+                    meta.source = "global"
+                    meta.is_cached = 1
+                
+                db.commit()
+                results.append({"code": code, "name": name, "ok": True, "saved": saved})
+                total_saved += saved
+                print(f"  ✓ 保存 {saved} 条")
+                
+            except Exception as e:
+                print(f"  ✗ 失败: {e}")
+                results.append({"code": code, "name": name, "ok": False, "error": str(e)})
+                db.rollback()
+                continue
+            
+            # 5秒间隔限速
+            if i < total:
+                time.sleep(_MIN_INTERVAL)
+    
+    finally:
+        db.close()
+        _clear_progress()
+    
+    success_count = sum(1 for r in results if r.get("ok"))
+    return {
+        "ok": True,
+        "message": f"同步完成: {total} 个品种, {success_count} 成功, {total - success_count} 失败, 共 {total_saved} 条数据",
+        "total": total,
+        "success": success_count,
+        "saved": total_saved,
+        "results": results
+    }
 
 
 def get_cache_status() -> dict:

@@ -27,7 +27,12 @@ def recalc_position(db: Session, code: str):
     if not trades:
         pos = db.query(Position).filter(Position.code == code).first()
         if pos:
-            db.delete(pos)
+            # 无交易记录但存在持仓记录，标记为已清仓
+            pos.quantity = 0
+            pos.total_cost = 0
+            pos.avg_cost = 0
+            pos.is_closed = 1
+            pos.updated_at = datetime.now()
         return
 
     total_cost = 0.0
@@ -54,11 +59,15 @@ def recalc_position(db: Session, code: str):
             # amount 记录的是分红的现金金额（用于参考），不影响成本计算
             total_quantity += qty
 
-    # 如果数量归零或以下，清空持仓
+    # 如果数量归零或以下，标记为已清仓
     if total_quantity <= 0:
         pos = db.query(Position).filter(Position.code == code).first()
         if pos:
-            db.delete(pos)
+            pos.quantity = 0
+            pos.total_cost = 0
+            pos.avg_cost = 0
+            pos.is_closed = 1
+            pos.updated_at = datetime.now()
         return
 
     avg_cost = total_cost / total_quantity if total_quantity > 0 else 0

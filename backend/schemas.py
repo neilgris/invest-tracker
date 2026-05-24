@@ -39,7 +39,6 @@ class PositionOut(BaseModel):
     id: int
     code: str
     name: str
-    short_name: Optional[str] = None
     category: Optional[str] = None
     linked_code: Optional[str] = None
     linked_name: Optional[str] = None
@@ -54,6 +53,7 @@ class PositionOut(BaseModel):
     total_pnl_pct: Optional[float] = None
     daily_pnl: Optional[float] = None
     daily_pnl_pct: Optional[float] = None
+    weight: Optional[float] = None
     updated_at: Optional[datetime] = None
 
     class Config:
@@ -66,6 +66,8 @@ class PositionCategoryUpdate(BaseModel):
 
 class PositionLinkedCodeUpdate(BaseModel):
     linked_code: Optional[str] = None  # 允许清空关联
+    linked_name: Optional[str] = None  # 关联ETF名称
+    linked_short_name: Optional[str] = None  # 关联ETF短名称
 
 
 # --- Overview ---

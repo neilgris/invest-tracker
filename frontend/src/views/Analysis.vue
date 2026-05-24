@@ -47,6 +47,7 @@
                   <div>
                     <el-button type="primary" size="small" @click="syncL1" :loading="loading.syncL1">同步L1宽基</el-button>
                     <el-button type="success" size="small" @click="syncL2" :loading="loading.syncL2">同步L2行业</el-button>
+                    <el-button type="warning" size="small" @click="syncL6" :loading="loading.syncL6">同步L6大宗</el-button>
                   </div>
                 </div>
               </template>
@@ -61,6 +62,7 @@
                     <el-option label="概念板块" value="sector_concept" />
                     <el-option label="ETF" value="etf" />
                     <el-option label="个股" value="stock" />
+                    <el-option label="大宗商品" value="commodity" />
                   </el-select>
                 </el-form-item>
                 <el-form-item>
@@ -79,7 +81,7 @@
               </div>
               <div style="color: #909399; font-size: 12px">
                 <p>L1: 7个宽基指数(上证/深证/沪深300/中证500/中证1000/创业板/科创50)</p>
-                <p>L2: ~90个行业板块 | L3: 概念板块 | L4: ETF | L5: 个股</p>
+                <p>L2: ~90个行业板块 | L3: 概念板块 | L4: ETF | L5: 个股 | L6: 国际大宗商品</p>
               </div>
             </el-card>
           </el-col>
@@ -91,7 +93,7 @@
                 <el-table-column prop="code" label="代码" width="100" show-overflow-tooltip>
                   <template #default="{ row }">
                     <el-tooltip :content="`${row.start || '-'} ~ ${row.end || '-'}`" placement="top">
-                      <span>{{ row.code }}</span>
+                      <el-link type="primary" @click="goToDataView(row)">{{ row.code }}</el-link>
                     </el-tooltip>
                   </template>
                 </el-table-column>
@@ -335,6 +337,7 @@
                 <el-option label="概念板块" value="sector_concept" />
                 <el-option label="ETF" value="etf" />
                 <el-option label="个股" value="stock" />
+                <el-option label="大宗商品" value="commodity" />
               </el-select>
               <!-- 二级选择：具体资产 + 左右切换 -->
               <div style="display: flex; align-items: center; gap: 8px">
@@ -386,7 +389,7 @@ import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import VChart from 'vue-echarts'
 import {
   analysisCacheStatus, analysisCacheSync, analysisCacheSyncBatch, analysisCacheProgress,
-  analysisCacheSyncL1, analysisCacheSyncL2,
+  analysisCacheSyncL1, analysisCacheSyncL2, analysisCacheSyncL6,
   analysisPearson, analysisCorrMatrix, analysisCCF, analysisGranger,
   analysisSeasonality, analysisMomentumReversal, analysisMeanReversion, analysisQuickReport,
   analysisDataOHLCV, analysisDataDistribution, analysisVolumeAnalysis, analysisDataStats
@@ -396,7 +399,7 @@ const activeTab = ref('cache')
 
 // 加载状态
 const loading = ref({
-  cache: false, syncL1: false, syncL2: false, syncSingle: false,
+  cache: false, syncL1: false, syncL2: false, syncL6: false, syncSingle: false,
   pearson: false, matrix: false, ccf: false, granger: false,
   season: false, momentum: false, revert: false, report: false
 })
@@ -606,15 +609,15 @@ const seasonChartOption = computed(() => {
 
 // 辅助函数
 const assetTypeTag = (type) => {
-  const map = { index: 'primary', sector_industry: 'success', sector_concept: 'warning', etf: 'info', stock: '' }
+  const map = { index: 'primary', sector_industry: 'success', sector_concept: 'warning', etf: 'info', stock: '', commodity: 'danger' }
   return map[type] || ''
 }
 const assetTypeLabel = (type) => {
-  const map = { index: '指数', sector_industry: '行业', sector_concept: '概念', etf: 'ETF', stock: '个股' }
+  const map = { index: '指数', sector_industry: '行业', sector_concept: '概念', etf: 'ETF', stock: '个股', commodity: '大宗商品' }
   return map[type] || type
 }
 const sourceLabel = (source) => {
-  const map = { sw: '申万', em: '东财', csindex: '中证', wind: 'Wind', ths: '同花顺' }
+  const map = { sw: '申万', em: '东财', csindex: '中证', wind: 'Wind', ths: '同花顺', global: '国际' }
   return map[source] || source
 }
 
@@ -664,6 +667,25 @@ const stopProgressPolling = () => {
   }
 }
 
+// 等待进度完成后再停止轮询
+const waitProgressComplete = async (timeoutMs = 30000) => {
+  const startTime = Date.now()
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const res = await analysisCacheProgress()
+      syncProgress.value = res.data
+      if (!res.data.active) {
+        // 任务已完成，再显示2秒后清除
+        await new Promise(r => setTimeout(r, 2000))
+        return
+      }
+    } catch (e) {
+      // ignore
+    }
+    await new Promise(r => setTimeout(r, 1000))
+  }
+}
+
 const syncL1 = async () => {
   loading.value.syncL1 = true
   startProgressPolling()
@@ -679,6 +701,7 @@ const syncL1 = async () => {
   } catch (e) {
     ElMessage.error('L1同步失败: ' + (e.response?.data?.detail || e.message))
   } finally {
+    await waitProgressComplete()
     stopProgressPolling()
     loading.value.syncL1 = false
     syncProgress.value = { active: false, task: '', current: 0, total: 0, current_code: '', message: '空闲' }
@@ -708,8 +731,32 @@ const syncL2 = async () => {
     // 错误时保持进度显示2秒
     await new Promise(r => setTimeout(r, 2000))
   } finally {
+    await waitProgressComplete()
     stopProgressPolling()
     loading.value.syncL2 = false
+    syncProgress.value = { active: false, task: '', current: 0, total: 0, current_code: '', message: '空闲' }
+  }
+}
+
+const syncL6 = async () => {
+  loading.value.syncL6 = true
+  startProgressPolling()
+  try {
+    const res = await analysisCacheSyncL6()
+    if (res.data.ok === false) {
+      ElMessage.error(res.data.message || 'L6同步失败')
+      await new Promise(r => setTimeout(r, 2000))
+      return
+    }
+    ElMessage.success(`L6同步完成: ${res.data.success}/${res.data.total} 个品种, ${res.data.saved}条数据`)
+    loadCacheStatus()
+  } catch (e) {
+    ElMessage.error('L6同步失败: ' + (e.response?.data?.detail || e.message))
+    await new Promise(r => setTimeout(r, 2000))
+  } finally {
+    await waitProgressComplete()
+    stopProgressPolling()
+    loading.value.syncL6 = false
     syncProgress.value = { active: false, task: '', current: 0, total: 0, current_code: '', message: '空闲' }
   }
 }
@@ -819,6 +866,17 @@ const loadReport = async () => {
   } finally {
     loading.value.report = false
   }
+}
+
+// 跳转到数据查看Tab
+const goToDataView = (row) => {
+  activeTab.value = 'dataview'
+  dataViewForm.value.code = row.code
+  // 如果row有asset_type，也设置类型筛选
+  if (row.asset_type) {
+    dataViewForm.value.assetType = row.asset_type
+  }
+  loadDataView()
 }
 
 // 数据查看

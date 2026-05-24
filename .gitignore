@@ -35,3 +35,7 @@ backend/static/index.html
 
 # Tests (keep in repo)
 !tests/
+
+# Backup files
+*.backup.*
+*.log

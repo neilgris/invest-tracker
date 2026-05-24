@@ -47,7 +47,7 @@ def _run_sync_with_progress(task_id: str):
             with _sync_lock:
                 _sync_tasks[task_id].update({
                     "completed": idx,
-                    "current": f"{pos.code}({pos.short_name or pos.name})",
+                    "current": f"{pos.code}({pos.linked_short_name or pos.name})",
                     "message": f"正在同步 {pos.code}..."
                 })
             

@@ -6,7 +6,7 @@ from models import Position, DailySnapshot, Trade, BaselineConfig
 from schemas import PositionOut, OverviewOut, BaselineConfigCreate, BaselineConfigOut, TradeMarker, PositionCategoryUpdate, PositionLinkedCodeUpdate
 from services.stats import get_overview
 from services.market import get_hist_prices
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import math
 
 router = APIRouter(prefix="/api/positions", tags=["持仓管理"])
@@ -14,19 +14,22 @@ router = APIRouter(prefix="/api/positions", tags=["持仓管理"])
 
 def enrich_position(pos: Position, db: Session, latest_snaps: dict = None, latest_date: date = None) -> dict:
     """计算持仓的衍生字段"""
-    mv = pos.quantity * pos.current_price if pos.current_price else pos.total_cost
-    total_pnl = mv - pos.total_cost
-    total_pnl_pct = (total_pnl / pos.total_cost * 100) if pos.total_cost > 0 else 0
-
-    # 最新有数据日期的盈亏 - 从预加载的快照字典获取
+    # 从快照获取最新价格（T-1收盘价），而不是 pos.current_price
     if latest_snaps is not None:
         snap = latest_snaps.get(pos.code)
     else:
         # 获取该持仓最新有数据的日期
-        latest_snap = db.query(DailySnapshot).filter(
+        snap = db.query(DailySnapshot).filter(
             DailySnapshot.code == pos.code
         ).order_by(DailySnapshot.date.desc()).first()
-        snap = latest_snap
+    
+    # 使用快照的收盘价作为当前价格（T-1）
+    current_price = snap.close if snap and snap.close else pos.current_price
+    
+    mv = pos.quantity * current_price if current_price else pos.total_cost
+    total_pnl = mv - pos.total_cost
+    total_pnl_pct = (total_pnl / pos.total_cost * 100) if pos.total_cost > 0 else 0
+
     daily_pnl = snap.daily_pnl if snap and snap.daily_pnl else 0
     daily_pnl_pct = (daily_pnl / pos.total_cost * 100) if pos.total_cost > 0 else 0
 
@@ -35,38 +38,56 @@ def enrich_position(pos: Position, db: Session, latest_snaps: dict = None, lates
     if pos.linked_code:
         linked_pos = db.query(Position).filter(Position.code == pos.linked_code).first()
         if linked_pos:
-            linked_mv = linked_pos.quantity * linked_pos.current_price if linked_pos.current_price else 0
+            # 关联ETF也从快照取最新价格
+            linked_snap = db.query(DailySnapshot).filter(
+                DailySnapshot.code == pos.linked_code
+            ).order_by(DailySnapshot.date.desc()).first()
+            linked_price = linked_snap.close if linked_snap and linked_snap.close else linked_pos.current_price
+            linked_mv = linked_pos.quantity * linked_price if linked_price else 0
             linked_info = {
                 "code": linked_pos.code,
                 "name": linked_pos.name,
-                "short_name": linked_pos.short_name,
-                "current_price": round(linked_pos.current_price, 4) if linked_pos.current_price else 0,
+
+                "current_price": round(linked_price, 4) if linked_price else 0,
                 "market_value": round(linked_mv, 2),
             }
         else:
-            # 不在持仓中，从搜索API获取名称
-            from services.market import _search_code
-            search_result = _search_code(pos.linked_code)
+            # 不在持仓中，优先从数据库读取持久化的名称
+            linked_name = pos.linked_name or ""
+            linked_short_name = pos.linked_short_name or ""
+            # 如果数据库中没有，fallback到搜索API
+            if not linked_name:
+                from services.market import _search_code
+                search_result = _search_code(pos.linked_code)
+                linked_name = search_result.get("name", "")
+                linked_short_name = search_result.get("short_name", "")
+            # 尝试从快照获取最新价格
+            linked_snap = db.query(DailySnapshot).filter(
+                DailySnapshot.code == pos.linked_code
+            ).order_by(DailySnapshot.date.desc()).first()
+            linked_price = linked_snap.close if linked_snap and linked_snap.close else 0
             linked_info = {
                 "code": pos.linked_code,
-                "name": search_result.get("name", ""),
-                "short_name": search_result.get("short_name", ""),
-                "current_price": 0,
+                "name": linked_name,
+                "current_price": round(linked_price, 4) if linked_price else 0,
                 "market_value": 0,
             }
+
+    # 名称显示：有关联ETF短名则优先使用
+    display_name = pos.linked_short_name if pos.linked_short_name else pos.name
 
     return {
         "id": pos.id,
         "code": pos.code,
-        "name": pos.name,
-        "short_name": pos.short_name,
+        "name": display_name,
+
         "category": pos.category,
         "linked_code": pos.linked_code,
         "linked_info": linked_info,
         "total_cost": round(pos.total_cost, 2),
         "quantity": pos.quantity,
         "avg_cost": round(pos.avg_cost, 4),
-        "current_price": round(pos.current_price, 4) if pos.current_price else 0,
+        "current_price": round(current_price, 4) if current_price else 0,
         "market_value": round(mv, 2),
         "total_pnl": round(total_pnl, 2),
         "total_pnl_pct": round(total_pnl_pct, 2),
@@ -78,7 +99,7 @@ def enrich_position(pos: Position, db: Session, latest_snaps: dict = None, lates
 
 @router.get("", response_model=list[PositionOut])
 def list_positions(db: Session = Depends(get_db)):
-    positions = db.query(Position).all()
+    positions = db.query(Position).filter(Position.is_closed == 0).all()
     if not positions:
         return []
 
@@ -94,7 +115,19 @@ def list_positions(db: Session = Depends(get_db)):
             latest_date_by_code[code] = snap.date
             latest_snaps[code] = snap
 
-    return [enrich_position(p, db, latest_snaps) for p in positions]
+    # 计算总市值
+    total_market_value = 0.0
+    enriched_positions = []
+    for p in positions:
+        pos_data = enrich_position(p, db, latest_snaps)
+        enriched_positions.append(pos_data)
+        total_market_value += pos_data["market_value"]
+    
+    # 添加持仓占比
+    for pos_data in enriched_positions:
+        pos_data["weight"] = round(pos_data["market_value"] / total_market_value * 100, 2) if total_market_value > 0 else 0
+    
+    return enriched_positions
 
 
 @router.get("/overview", response_model=OverviewOut)
@@ -105,26 +138,18 @@ def overview(db: Session = Depends(get_db)):
 @router.get("/closed-positions")
 def get_closed_positions(db: Session = Depends(get_db)):
     """获取已清仓标的的历史收益"""
-    from sqlalchemy import distinct
-    
-    # 获取所有有过交易记录的代码
-    traded_codes = db.query(distinct(Trade.code)).all()
-    traded_codes = [c[0] for c in traded_codes]
-    
-    # 获取当前持仓代码
-    current_codes = db.query(Position.code).all()
-    current_codes = [c[0] for c in current_codes]
-    
-    # 已清仓 = 有过交易但不在当前持仓中
-    closed_codes = set(traded_codes) - set(current_codes)
+    # 直接查询 is_closed=1 的持仓记录
+    closed_positions = db.query(Position).filter(Position.is_closed == 1).all()
     
     result = []
-    for code in closed_codes:
+    for position in closed_positions:
+        code = position.code
         trades = db.query(Trade).filter(Trade.code == code).order_by(Trade.trade_date).all()
         if not trades:
             continue
-            
-        name = trades[0].name
+        
+        # 已清仓标的：优先使用关联ETF短名
+        name = position.linked_short_name if position.linked_short_name else position.name
         
         # 计算总买入、总卖出、总分红
         total_buy = 0
@@ -211,8 +236,8 @@ def _aggregate_monthly(snaps: list) -> list[dict]:
 
 
 @router.get("/{code}/chart")
-def get_position_chart(code: str, period: str = Query("daily", regex="^(daily|weekly|monthly)$"), db: Session = Depends(get_db)):
-    """获取持仓走势图数据 + 买卖标记，从本地 daily_snapshots 读取"""
+def get_position_chart(code: str, period: str = Query("daily", regex="^(daily|weekly|monthly)$"), baseline_code: str = Query(None), db: Session = Depends(get_db)):
+    """获取持仓走势图数据 + 买卖标记 + 基线对比，从本地 daily_snapshots 读取"""
     pos = db.query(Position).filter(Position.code == code).first()
     if not pos:
         raise HTTPException(status_code=404, detail="持仓不存在")
@@ -226,7 +251,7 @@ def get_position_chart(code: str, period: str = Query("daily", regex="^(daily|we
         # 本地无数据，尝试从 API 拉取一次
         first_trade = db.query(Trade).filter(Trade.code == code).order_by(Trade.trade_date).first()
         if not first_trade:
-            return {"prices": [], "markers": []}
+            return {"prices": [], "markers": [], "baseline": []}
         start_date = (first_trade.trade_date - timedelta(days=30)).strftime("%Y%m%d")
         end_date = (date.today() + timedelta(days=1)).strftime("%Y%m%d")
         raw = get_hist_prices(code, start_date, end_date)
@@ -257,7 +282,48 @@ def get_position_chart(code: str, period: str = Query("daily", regex="^(daily|we
             "amount": t.amount,
         })
 
-    return {"prices": prices, "markers": markers}
+    # 基线数据（归一化）- 优先从 HistQuotesCache 读取
+    baseline = []
+    if baseline_code:
+        from models import HistQuotesCache
+        from sqlalchemy import func
+        
+        base_start = prices[0]["date"] if prices else None
+        base_end = prices[-1]["date"] if prices else (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+        
+        if base_start:
+            # 从 HistQuotesCache 读取基线数据
+            start_dt = datetime.strptime(base_start, "%Y-%m-%d").date()
+            end_dt = datetime.strptime(base_end, "%Y-%m-%d").date()
+            
+            base_rows = db.query(HistQuotesCache).filter(
+                HistQuotesCache.code == baseline_code,
+                HistQuotesCache.date >= start_dt,
+                HistQuotesCache.date <= end_dt
+            ).order_by(HistQuotesCache.date).all()
+            
+            # 如果本地没有，回退到实时拉取
+            if not base_rows:
+                start_dt_query = datetime.strptime(base_start, "%Y-%m-%d") - timedelta(days=30)
+                base_start_date = start_dt_query.strftime("%Y%m%d")
+                base_end_date = end_dt.strftime("%Y%m%d")
+                raw = get_hist_prices(baseline_code, base_start_date, base_end_date)
+                base_rows = [type('obj', (object,), {'date': datetime.strptime(p["date"], "%Y-%m-%d").date(), 'close': p["close"]}) for p in raw]
+            
+            # 按 period 聚合基线
+            if period == "weekly":
+                from .daily import _aggregate_weekly
+                baseline_data = _aggregate_weekly(base_rows)
+            elif period == "monthly":
+                from .daily import _aggregate_monthly
+                baseline_data = _aggregate_monthly(base_rows)
+            else:
+                baseline_data = [{"date": r.date.isoformat(), "close": r.close} for r in base_rows]
+
+            # 返回原始点位（前端双Y轴显示）
+            baseline = [{"date": d["date"], "value": d["close"]} for d in baseline_data]
+
+    return {"prices": prices, "markers": markers, "baseline": baseline}
 
 
 @router.get("/{code}/baseline")
@@ -377,6 +443,8 @@ def update_position_linked_code(code: str, update: PositionLinkedCodeUpdate, db:
             raise HTTPException(status_code=400, detail=f"找不到代码 {update.linked_code} 对应的标的")
     
     pos.linked_code = update.linked_code
+    pos.linked_name = update.linked_name
+    pos.linked_short_name = update.linked_short_name
     db.commit()
     db.refresh(pos)
     return enrich_position(pos, db)
@@ -460,12 +528,26 @@ def suggest_linked_etf(code: str, db: Session = Depends(get_db)):
 @router.get("/categories/stats")
 def get_category_stats(db: Session = Depends(get_db)):
     """按分类统计持仓"""
+    from models import DailySnapshot
+    
     positions = db.query(Position).all()
+    
+    # 预加载所有今日快照
+    today = date.today()
+    all_snaps = db.query(DailySnapshot).filter(DailySnapshot.date <= today).all()
+    snaps_by_code = {}
+    for snap in all_snaps:
+        if snap.code not in snaps_by_code or snap.date > snaps_by_code[snap.code].date:
+            snaps_by_code[snap.code] = snap
     
     stats = {}
     for pos in positions:
         cat = pos.category or "未分类"
-        mv = pos.quantity * pos.current_price if pos.current_price else pos.total_cost
+        
+        # 从快照获取最新价格（T-1收盘价）
+        snap = snaps_by_code.get(pos.code)
+        price = snap.close if snap and snap.close else pos.current_price
+        mv = pos.quantity * price if price else pos.total_cost
         
         if cat not in stats:
             stats[cat] = {"count": 0, "market_value": 0, "total_cost": 0}

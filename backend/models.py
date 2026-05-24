@@ -24,13 +24,16 @@ class Position(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     code = Column(String(10), nullable=False, unique=True, index=True)
     name = Column(String(50), nullable=False)
-    short_name = Column(String(30), nullable=True)  # 简化名称
+
     category = Column(String(20), nullable=True)  # 分类标签
     linked_code = Column(String(10), nullable=True)  # 关联场内ETF代码
+    linked_name = Column(String(50), nullable=True)  # 关联ETF名称
+    linked_short_name = Column(String(30), nullable=True)  # 关联ETF短名称
     total_cost = Column(Float, default=0.0)
     quantity = Column(Float, default=0.0)
     avg_cost = Column(Float, default=0.0)
     current_price = Column(Float, default=0.0)
+    is_closed = Column(Integer, default=0)  # 0=当前持仓, 1=已清仓
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 

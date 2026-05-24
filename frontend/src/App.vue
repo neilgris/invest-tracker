@@ -2,7 +2,7 @@
   <el-container style="min-height: 100vh">
     <el-aside width="140px" style="background: #304156; flex-shrink: 0">
       <div style="padding: 16px 10px; text-align: center; color: #fff; font-size: 16px; font-weight: bold">
-        📊 投资追踪
+        📊 Demo
       </div>
       <el-menu
         :default-active="$route.path"

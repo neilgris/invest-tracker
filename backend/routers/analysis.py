@@ -135,6 +135,13 @@ def sync_l3_concept():
     return _sync()
 
 
+@router.post("/cache/sync-l6")
+def sync_l6_commodity():
+    """同步 L6 国际大宗商品（黄金/原油/白银等）"""
+    from services.analysis.data_fetcher import sync_l6_commodity as _sync
+    return _sync()
+
+
 @router.post("/cache/sync-l2-em")
 def sync_l2_em():
     """同步 L2 行业板块（东方财富源）"""

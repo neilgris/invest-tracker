@@ -15,10 +15,14 @@ export const deleteTrade = (id) => api.delete(`/trades/${id}`)
 export const getPositions = () => api.get('/positions')
 export const getOverview = () => api.get('/positions/overview')
 export const getPositionDetail = (code) => api.get(`/positions/${code}`)
-export const getPositionChart = (code, period = 'daily') => api.get(`/positions/${code}/chart`, { params: { period } })
+export const getPositionChart = (code, period = 'daily', baselineCode = '') => api.get(`/positions/${code}/chart`, { params: { period, baseline_code: baselineCode || undefined } })
 export const getBaselineComparison = (code, baselineCode, period = 'daily') => api.get(`/positions/${code}/baseline`, { params: { baseline_code: baselineCode, period } })
 export const updatePositionCategory = (code, category) => api.patch(`/positions/${code}/category`, { category })
-export const updatePositionLinkedCode = (code, linkedCode) => api.patch(`/positions/${code}/linked-code`, { linked_code: linkedCode })
+export const updatePositionLinkedCode = (code, linkedCode, linkedName = null, linkedShortName = null) => api.patch(`/positions/${code}/linked-code`, { 
+  linked_code: linkedCode,
+  linked_name: linkedName,
+  linked_short_name: linkedShortName
+})
 export const suggestLinkedEtf = (code) => api.get(`/positions/${code}/suggest-linked`)
 export const getCategoryStats = () => api.get('/positions/categories/stats')
 export const getClosedPositions = () => api.get('/positions/closed-positions')
@@ -52,6 +56,7 @@ export const analysisCacheSync = (data) => api.post('/analysis/cache/sync', data
 export const analysisCacheSyncBatch = (data) => api.post('/analysis/cache/sync-batch', data)
 export const analysisCacheSyncL1 = () => api.post('/analysis/cache/sync-l1')
 export const analysisCacheSyncL2 = () => api.post('/analysis/cache/sync-l2')
+export const analysisCacheSyncL6 = () => api.post('/analysis/cache/sync-l6')
 export const analysisCacheStatus = () => api.get('/analysis/cache/status')
 export const analysisCacheProgress = () => api.get('/analysis/cache/progress')
 export const analysisPearson = (data) => api.post('/analysis/correlation/pearson', data)

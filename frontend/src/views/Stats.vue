@@ -23,8 +23,8 @@
                 :row-class-name="getRowClassName"
               >
                 <el-table-column prop="month" label="月份" width="90" />
-                <el-table-column label="期末市值" width="110" sortable>
-                  <template #default="{ row }">¥{{ row.end_market_value?.toLocaleString() }}</template>
+                <el-table-column label="持仓市值" width="110" sortable>
+                  <template #default="{ row }">¥{{ row.holding_market_value?.toLocaleString() }}</template>
                 </el-table-column>
                 <el-table-column label="月度收益" width="120" sortable>
                   <template #default="{ row }">
@@ -65,31 +65,41 @@
               </template>
               
               <!-- 汇总数据卡片 -->
-              <el-row :gutter="15" v-if="monthDetailSummary.position_count > 0" style="margin-bottom: 15px">
-                <el-col :span="6">
-                  <div style="background: #f5f7fa; padding: 12px; border-radius: 4px; text-align: center">
-                    <div style="color: #909399; font-size: 12px; margin-bottom: 4px">期初市值</div>
-                    <div style="font-size: 16px; font-weight: bold">¥{{ monthDetailSummary.total_start_market_value?.toLocaleString() }}</div>
+              <el-row :gutter="10" v-if="monthDetailSummary.position_count > 0" style="margin-bottom: 15px">
+                <el-col :span="5">
+                  <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; text-align: center">
+                    <div style="color: #909399; font-size: 11px; margin-bottom: 4px">已实现收益</div>
+                    <div style="font-size: 14px; font-weight: bold" :class="monthDetailSummary.total_realized_pnl >= 0 ? 'profit' : 'loss'">
+                      {{ monthDetailSummary.total_realized_pnl >= 0 ? '+' : '' }}¥{{ monthDetailSummary.total_realized_pnl?.toLocaleString() }}
+                    </div>
                   </div>
                 </el-col>
-                <el-col :span="6">
-                  <div style="background: #f5f7fa; padding: 12px; border-radius: 4px; text-align: center">
-                    <div style="color: #909399; font-size: 12px; margin-bottom: 4px">月末市值</div>
-                    <div style="font-size: 16px; font-weight: bold">¥{{ monthDetailSummary.total_end_market_value?.toLocaleString() }}</div>
+                <el-col :span="5">
+                  <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; text-align: center">
+                    <div style="color: #909399; font-size: 11px; margin-bottom: 4px">持仓收益</div>
+                    <div style="font-size: 14px; font-weight: bold" :class="monthDetailSummary.total_unrealized_pnl >= 0 ? 'profit' : 'loss'">
+                      {{ monthDetailSummary.total_unrealized_pnl >= 0 ? '+' : '' }}¥{{ monthDetailSummary.total_unrealized_pnl?.toLocaleString() }}
+                    </div>
                   </div>
                 </el-col>
-                <el-col :span="6">
-                  <div style="background: #f5f7fa; padding: 12px; border-radius: 4px; text-align: center">
-                    <div style="color: #909399; font-size: 12px; margin-bottom: 4px">当月盈亏</div>
-                    <div style="font-size: 16px; font-weight: bold" :class="monthDetailSummary.total_pnl >= 0 ? 'profit' : 'loss'">
+                <el-col :span="5">
+                  <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; text-align: center">
+                    <div style="color: #909399; font-size: 11px; margin-bottom: 4px">当月总收益</div>
+                    <div style="font-size: 14px; font-weight: bold" :class="monthDetailSummary.total_pnl >= 0 ? 'profit' : 'loss'">
                       {{ monthDetailSummary.total_pnl >= 0 ? '+' : '' }}¥{{ monthDetailSummary.total_pnl?.toLocaleString() }}
                     </div>
                   </div>
                 </el-col>
-                <el-col :span="6">
-                  <div style="background: #f5f7fa; padding: 12px; border-radius: 4px; text-align: center">
-                    <div style="color: #909399; font-size: 12px; margin-bottom: 4px">收益率</div>
-                    <div style="font-size: 16px; font-weight: bold" :class="monthDetailSummary.total_pnl_pct >= 0 ? 'profit' : 'loss'">
+                <el-col :span="5">
+                  <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; text-align: center">
+                    <div style="color: #909399; font-size: 11px; margin-bottom: 4px">持仓市值</div>
+                    <div style="font-size: 14px; font-weight: bold">¥{{ monthDetailSummary.total_end_market_value?.toLocaleString() }}</div>
+                  </div>
+                </el-col>
+                <el-col :span="4">
+                  <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; text-align: center">
+                    <div style="color: #909399; font-size: 11px; margin-bottom: 4px">收益率</div>
+                    <div style="font-size: 14px; font-weight: bold" :class="monthDetailSummary.total_pnl_pct >= 0 ? 'profit' : 'loss'">
                       {{ monthDetailSummary.total_pnl_pct >= 0 ? '+' : '' }}{{ monthDetailSummary.total_pnl_pct }}%
                     </div>
                   </div>
@@ -101,27 +111,37 @@
                 stripe 
                 style="width: 100%" 
                 v-if="monthDetailData.length > 0"
-                max-height="480"
                 show-summary
                 :summary-method="getMonthDetailSummary"
                 :default-sort="{ prop: 'pnl', order: 'descending' }"
               >
                 <el-table-column prop="code" label="代码" width="85" sortable />
-                <el-table-column prop="name" label="名称" width="130" show-overflow-tooltip />
-                <el-table-column label="期初市值" width="110" sortable :sort-by="['start_cost', 'start_market_value']">
-                  <template #default="{ row }">¥{{ (row.start_cost || row.start_market_value)?.toLocaleString() }}</template>
-                </el-table-column>
-                <el-table-column prop="end_market_value" label="月末市值" width="110" sortable>
+                <el-table-column prop="name" label="名称" width="140" show-overflow-tooltip />
+                <el-table-column prop="end_market_value" label="持仓市值" width="110" sortable>
                   <template #default="{ row }">¥{{ row.end_market_value?.toLocaleString() }}</template>
                 </el-table-column>
-                <el-table-column prop="pnl" label="当月盈亏" width="110" sortable>
+                <el-table-column prop="realized_pnl" label="已实现收益" width="105" sortable>
+                  <template #default="{ row }">
+                    <span :class="row.realized_pnl >= 0 ? 'profit' : 'loss'">
+                      {{ row.realized_pnl >= 0 ? '+' : '' }}¥{{ row.realized_pnl?.toLocaleString() }}
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="unrealized_pnl" label="持仓收益" width="105" sortable>
+                  <template #default="{ row }">
+                    <span :class="row.unrealized_pnl >= 0 ? 'profit' : 'loss'">
+                      {{ row.unrealized_pnl >= 0 ? '+' : '' }}¥{{ row.unrealized_pnl?.toLocaleString() }}
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="pnl" label="当月总收益" width="105" sortable>
                   <template #default="{ row }">
                     <span :class="row.pnl >= 0 ? 'profit' : 'loss'">
                       {{ row.pnl >= 0 ? '+' : '' }}¥{{ row.pnl?.toLocaleString() }}
                     </span>
                   </template>
                 </el-table-column>
-                <el-table-column prop="pnl_pct" label="收益率" width="100" sortable>
+                <el-table-column prop="pnl_pct" label="收益率" width="90" sortable>
                   <template #default="{ row }">
                     <span :class="row.pnl_pct >= 0 ? 'profit' : 'loss'">
                       {{ row.pnl_pct >= 0 ? '+' : '' }}{{ row.pnl_pct }}%
@@ -166,10 +186,21 @@
                 :row-class-name="getYearRowClassName"
               >
                 <el-table-column prop="year" label="年份" width="60" />
-                <el-table-column label="期末市值" width="110" sortable>
-                  <template #default="{ row }">¥{{ row.end_market_value?.toLocaleString() }}</template>
+                <el-table-column label="已实现收益" width="115" sortable>
+                  <template #default="{ row }">
+                    <span :class="row.realized_pnl >= 0 ? 'profit' : 'loss'">
+                      {{ row.realized_pnl >= 0 ? '+' : '' }}¥{{ row.realized_pnl?.toLocaleString() }}
+                    </span>
+                  </template>
                 </el-table-column>
-                <el-table-column label="年度收益" width="120" sortable>
+                <el-table-column label="持仓收益" width="115" sortable>
+                  <template #default="{ row }">
+                    <span :class="row.unrealized_pnl >= 0 ? 'profit' : 'loss'">
+                      {{ row.unrealized_pnl >= 0 ? '+' : '' }}¥{{ row.unrealized_pnl?.toLocaleString() }}
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="年度总收益" width="120" sortable>
                   <template #default="{ row }">
                     <span :class="row.pnl >= 0 ? 'profit' : 'loss'">
                       {{ row.pnl >= 0 ? '+' : '' }}¥{{ row.pnl?.toLocaleString() }}
@@ -208,31 +239,41 @@
               </template>
               
               <!-- 汇总数据卡片 -->
-              <el-row :gutter="15" v-if="yearDetailSummary.position_count > 0" style="margin-bottom: 15px">
-                <el-col :span="6">
-                  <div style="background: #f5f7fa; padding: 12px; border-radius: 4px; text-align: center">
-                    <div style="color: #909399; font-size: 12px; margin-bottom: 4px">期初市值</div>
-                    <div style="font-size: 16px; font-weight: bold">¥{{ yearDetailSummary.total_start_market_value?.toLocaleString() }}</div>
+              <el-row :gutter="10" v-if="yearDetailSummary.position_count > 0" style="margin-bottom: 15px">
+                <el-col :span="5">
+                  <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; text-align: center">
+                    <div style="color: #909399; font-size: 11px; margin-bottom: 4px">已实现收益</div>
+                    <div style="font-size: 14px; font-weight: bold" :class="yearDetailSummary.total_realized_pnl >= 0 ? 'profit' : 'loss'">
+                      {{ yearDetailSummary.total_realized_pnl >= 0 ? '+' : '' }}¥{{ yearDetailSummary.total_realized_pnl?.toLocaleString() }}
+                    </div>
                   </div>
                 </el-col>
-                <el-col :span="6">
-                  <div style="background: #f5f7fa; padding: 12px; border-radius: 4px; text-align: center">
-                    <div style="color: #909399; font-size: 12px; margin-bottom: 4px">年末市值</div>
-                    <div style="font-size: 16px; font-weight: bold">¥{{ yearDetailSummary.total_end_market_value?.toLocaleString() }}</div>
+                <el-col :span="5">
+                  <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; text-align: center">
+                    <div style="color: #909399; font-size: 11px; margin-bottom: 4px">持仓收益</div>
+                    <div style="font-size: 14px; font-weight: bold" :class="yearDetailSummary.total_unrealized_pnl >= 0 ? 'profit' : 'loss'">
+                      {{ yearDetailSummary.total_unrealized_pnl >= 0 ? '+' : '' }}¥{{ yearDetailSummary.total_unrealized_pnl?.toLocaleString() }}
+                    </div>
                   </div>
                 </el-col>
-                <el-col :span="6">
-                  <div style="background: #f5f7fa; padding: 12px; border-radius: 4px; text-align: center">
-                    <div style="color: #909399; font-size: 12px; margin-bottom: 4px">年度盈亏</div>
-                    <div style="font-size: 16px; font-weight: bold" :class="yearDetailSummary.total_pnl >= 0 ? 'profit' : 'loss'">
+                <el-col :span="5">
+                  <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; text-align: center">
+                    <div style="color: #909399; font-size: 11px; margin-bottom: 4px">年度总收益</div>
+                    <div style="font-size: 14px; font-weight: bold" :class="yearDetailSummary.total_pnl >= 0 ? 'profit' : 'loss'">
                       {{ yearDetailSummary.total_pnl >= 0 ? '+' : '' }}¥{{ yearDetailSummary.total_pnl?.toLocaleString() }}
                     </div>
                   </div>
                 </el-col>
-                <el-col :span="6">
-                  <div style="background: #f5f7fa; padding: 12px; border-radius: 4px; text-align: center">
-                    <div style="color: #909399; font-size: 12px; margin-bottom: 4px">收益率</div>
-                    <div style="font-size: 16px; font-weight: bold" :class="yearDetailSummary.total_pnl_pct >= 0 ? 'profit' : 'loss'">
+                <el-col :span="5">
+                  <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; text-align: center">
+                    <div style="color: #909399; font-size: 11px; margin-bottom: 4px">持仓市值</div>
+                    <div style="font-size: 14px; font-weight: bold">¥{{ yearDetailSummary.total_end_market_value?.toLocaleString() }}</div>
+                  </div>
+                </el-col>
+                <el-col :span="4">
+                  <div style="background: #f5f7fa; padding: 10px; border-radius: 4px; text-align: center">
+                    <div style="color: #909399; font-size: 11px; margin-bottom: 4px">收益率</div>
+                    <div style="font-size: 14px; font-weight: bold" :class="yearDetailSummary.total_pnl_pct >= 0 ? 'profit' : 'loss'">
                       {{ yearDetailSummary.total_pnl_pct >= 0 ? '+' : '' }}{{ yearDetailSummary.total_pnl_pct }}%
                     </div>
                   </div>
@@ -244,27 +285,37 @@
                 stripe 
                 style="width: 100%" 
                 v-if="yearDetailData.length > 0"
-                max-height="480"
                 show-summary
                 :summary-method="getYearDetailSummary"
                 :default-sort="{ prop: 'pnl', order: 'descending' }"
               >
                 <el-table-column prop="code" label="代码" width="85" sortable />
-                <el-table-column prop="name" label="名称" width="130" show-overflow-tooltip />
-                <el-table-column label="期初市值" width="110" sortable :sort-by="['start_cost', 'start_market_value']">
-                  <template #default="{ row }">¥{{ (row.start_cost || row.start_market_value)?.toLocaleString() }}</template>
-                </el-table-column>
-                <el-table-column prop="end_market_value" label="年末市值" width="110" sortable>
+                <el-table-column prop="name" label="名称" width="140" show-overflow-tooltip />
+                <el-table-column prop="end_market_value" label="持仓市值" width="110" sortable>
                   <template #default="{ row }">¥{{ row.end_market_value?.toLocaleString() }}</template>
                 </el-table-column>
-                <el-table-column prop="pnl" label="年度盈亏" width="110" sortable>
+                <el-table-column prop="realized_pnl" label="已实现收益" width="105" sortable>
+                  <template #default="{ row }">
+                    <span :class="row.realized_pnl >= 0 ? 'profit' : 'loss'">
+                      {{ row.realized_pnl >= 0 ? '+' : '' }}¥{{ row.realized_pnl?.toLocaleString() }}
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="unrealized_pnl" label="持仓收益" width="105" sortable>
+                  <template #default="{ row }">
+                    <span :class="row.unrealized_pnl >= 0 ? 'profit' : 'loss'">
+                      {{ row.unrealized_pnl >= 0 ? '+' : '' }}¥{{ row.unrealized_pnl?.toLocaleString() }}
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="pnl" label="年度总收益" width="105" sortable>
                   <template #default="{ row }">
                     <span :class="row.pnl >= 0 ? 'profit' : 'loss'">
                       {{ row.pnl >= 0 ? '+' : '' }}¥{{ row.pnl?.toLocaleString() }}
                     </span>
                   </template>
                 </el-table-column>
-                <el-table-column prop="pnl_pct" label="收益率" width="100" sortable>
+                <el-table-column prop="pnl_pct" label="收益率" width="90" sortable>
                   <template #default="{ row }">
                     <span :class="row.pnl_pct >= 0 ? 'profit' : 'loss'">
                       {{ row.pnl_pct >= 0 ? '+' : '' }}{{ row.pnl_pct }}%
@@ -383,12 +434,13 @@ const chartOption = computed(() => {
 // 年度汇总卡片数据
 const yearlySummaryCards = computed(() => {
   const totalPnl = yearly.value.reduce((sum, y) => sum + (y.pnl || 0), 0)
-  const avgCost = yearly.value.length > 0
-    ? yearly.value.reduce((sum, y) => sum + (y.cost || 0), 0) / yearly.value.length
-    : 0
-  const avgReturn = yearly.value.length > 0
-    ? totalPnl / avgCost * 100
-    : 0
+  // 几何平均年化收益率 = (∏(1 + ri))^(1/n) - 1
+  const n = yearly.value.length
+  let avgReturn = 0
+  if (n > 0) {
+    const product = yearly.value.reduce((prod, y) => prod * (1 + (y.pnl_pct || 0) / 100), 1)
+    avgReturn = (Math.pow(product, 1 / n) - 1) * 100
+  }
   const bestYear = yearly.value.length > 0
     ? yearly.value.reduce((max, y) => y.pnl_pct > max.pnl_pct ? y : max, yearly.value[0])
     : null
@@ -528,6 +580,16 @@ const getMonthDetailSummary = (param) => {
       sums[index] = '¥' + monthDetailSummary.value.total_end_market_value?.toLocaleString()
       return
     }
+    if (column.property === 'realized_pnl') {
+      const pnl = monthDetailSummary.value.total_realized_pnl
+      sums[index] = (pnl >= 0 ? '+' : '') + '¥' + pnl?.toLocaleString()
+      return
+    }
+    if (column.property === 'unrealized_pnl') {
+      const pnl = monthDetailSummary.value.total_unrealized_pnl
+      sums[index] = (pnl >= 0 ? '+' : '') + '¥' + pnl?.toLocaleString()
+      return
+    }
     if (column.property === 'pnl') {
       const pnl = monthDetailSummary.value.total_pnl
       sums[index] = (pnl >= 0 ? '+' : '') + '¥' + pnl?.toLocaleString()
@@ -583,6 +645,16 @@ const getYearDetailSummary = (param) => {
     }
     if (column.property === 'end_market_value') {
       sums[index] = '¥' + yearDetailSummary.value.total_end_market_value?.toLocaleString()
+      return
+    }
+    if (column.property === 'realized_pnl') {
+      const pnl = yearDetailSummary.value.total_realized_pnl
+      sums[index] = (pnl >= 0 ? '+' : '') + '¥' + pnl?.toLocaleString()
+      return
+    }
+    if (column.property === 'unrealized_pnl') {
+      const pnl = yearDetailSummary.value.total_unrealized_pnl
+      sums[index] = (pnl >= 0 ? '+' : '') + '¥' + pnl?.toLocaleString()
       return
     }
     if (column.property === 'pnl') {
