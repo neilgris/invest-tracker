@@ -47,7 +47,8 @@
                   <div>
                     <el-button type="primary" size="small" @click="syncL1" :loading="loading.syncL1">同步L1宽基</el-button>
                     <el-button type="success" size="small" @click="syncL2" :loading="loading.syncL2">同步L2行业</el-button>
-                    <el-button type="warning" size="small" @click="syncL6" :loading="loading.syncL6">同步L6大宗</el-button>
+                    <el-button type="warning" size="small" @click="syncL6" :loading="loading.syncL6">同步L6国际大宗</el-button>
+                    <el-button type="danger" size="small" @click="syncL6C" :loading="loading.syncL6C">同步L6C国内大宗</el-button>
                   </div>
                 </div>
               </template>
@@ -378,6 +379,47 @@
           </el-col>
         </el-row>
       </el-tab-pane>
+
+      <!-- Tab 5: 大宗商品 -->
+      <el-tab-pane label="大宗商品" name="commodity">
+        <el-row :gutter="20">
+          <el-col :span="6">
+            <el-card shadow="hover">
+              <template #header>
+                <span>品种列表</span>
+              </template>
+              <el-table
+                :data="commodityAssets"
+                size="small"
+                height="500"
+                highlight-current-row
+                @row-click="onCommoditySelect"
+                style="cursor: pointer"
+              >
+                <el-table-column prop="code" label="代码" width="80" />
+                <el-table-column prop="name" label="名称" />
+                <el-table-column prop="source" label="来源" width="70">
+                  <template #default="{ row }">
+                    <el-tag size="small" type="info">{{ sourceLabel(row.source) }}</el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-card>
+          </el-col>
+          <el-col :span="18">
+            <el-card shadow="hover">
+              <template #header>
+                <div style="display: flex; justify-content: space-between; align-items: center">
+                  <span>{{ selectedCommodity?.name || '选择品种查看走势' }}</span>
+                  <el-tag v-if="selectedCommodity" size="small" type="info">{{ selectedCommodity.code }}</el-tag>
+                </div>
+              </template>
+              <v-chart v-if="commodityChartData.length" :option="commodityChartOption" style="height: 500px" autoresize />
+              <el-empty v-else description="点击左侧品种查看走势图" />
+            </el-card>
+          </el-col>
+        </el-row>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -389,7 +431,7 @@ import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import VChart from 'vue-echarts'
 import {
   analysisCacheStatus, analysisCacheSync, analysisCacheSyncBatch, analysisCacheProgress,
-  analysisCacheSyncL1, analysisCacheSyncL2, analysisCacheSyncL6,
+  analysisCacheSyncL1, analysisCacheSyncL2, analysisCacheSyncL6, analysisCacheSyncL6C,
   analysisPearson, analysisCorrMatrix, analysisCCF, analysisGranger,
   analysisSeasonality, analysisMomentumReversal, analysisMeanReversion, analysisQuickReport,
   analysisDataOHLCV, analysisDataDistribution, analysisVolumeAnalysis, analysisDataStats
@@ -399,7 +441,7 @@ const activeTab = ref('cache')
 
 // 加载状态
 const loading = ref({
-  cache: false, syncL1: false, syncL2: false, syncL6: false, syncSingle: false,
+  cache: false, syncL1: false, syncL2: false, syncL6: false, syncL6C: false, syncSingle: false,
   pearson: false, matrix: false, ccf: false, granger: false,
   season: false, momentum: false, revert: false, report: false
 })
@@ -501,6 +543,39 @@ const revertResult = ref({})
 
 const reportForm = ref({ code: '000001' })
 const reportResult = ref({})
+
+// 大宗商品
+const commodityAssets = ref([])
+const selectedCommodity = ref(null)
+const commodityChartData = ref([])
+
+// 筛选大宗商品资产
+const loadCommodityAssets = () => {
+  commodityAssets.value = cacheAssets.value.filter(a => a.asset_type === 'commodity')
+  // 默认选中第一个并加载数据
+  if (commodityAssets.value.length > 0 && !selectedCommodity.value) {
+    const first = commodityAssets.value[0]
+    selectedCommodity.value = first
+    loadCommodityChart(first.code)
+  }
+}
+
+// 大宗商品选择
+const onCommoditySelect = (row) => {
+  selectedCommodity.value = row
+  loadCommodityChart(row.code)
+}
+
+// 加载大宗商品走势图数据
+const loadCommodityChart = async (code) => {
+  if (!code) return
+  try {
+    const ohlcvRes = await analysisDataOHLCV(code, 5000)
+    commodityChartData.value = ohlcvRes.data.data || []
+  } catch (e) {
+    ElMessage.error('加载数据失败')
+  }
+}
 
 // 资产选项（从缓存状态生成）
 const cacheAssetOptions = computed(() => {
@@ -623,14 +698,9 @@ const sourceLabel = (source) => {
 
 // API调用
 const loadCacheStatus = async () => {
-  console.log('loadCacheStatus called')
   loading.value.cache = true
   try {
     const res = await analysisCacheStatus()
-    console.log('analysisCacheStatus returned')
-    console.log('Full res:', res)
-    console.log('res.data:', res.data)
-    console.log('res.data?.date_ranges:', res.data?.date_ranges)
     cacheStatus.value = res.data || res
     // 合并 date_ranges 和 by_type 信息
     const typeMap = {}
@@ -757,6 +827,29 @@ const syncL6 = async () => {
     await waitProgressComplete()
     stopProgressPolling()
     loading.value.syncL6 = false
+    syncProgress.value = { active: false, task: '', current: 0, total: 0, current_code: '', message: '空闲' }
+  }
+}
+
+const syncL6C = async () => {
+  loading.value.syncL6C = true
+  startProgressPolling()
+  try {
+    const res = await analysisCacheSyncL6C()
+    if (res.data.ok === false) {
+      ElMessage.error(res.data.message || 'L6C同步失败')
+      await new Promise(r => setTimeout(r, 2000))
+      return
+    }
+    ElMessage.success(`L6C同步完成: ${res.data.success}/${res.data.total} 个品种, ${res.data.saved}条数据`)
+    loadCacheStatus()
+  } catch (e) {
+    ElMessage.error('L6C同步失败: ' + (e.response?.data?.detail || e.message))
+    await new Promise(r => setTimeout(r, 2000))
+  } finally {
+    await waitProgressComplete()
+    stopProgressPolling()
+    loading.value.syncL6C = false
     syncProgress.value = { active: false, task: '', current: 0, total: 0, current_code: '', message: '空闲' }
   }
 }
@@ -899,27 +992,58 @@ const loadDataView = async () => {
   }
 }
 
-// K线图配置（与成交量融合显示）
+// K线图配置（与大宗商品Tab一致）
 const klineOption = computed(() => {
   if (!klineData.value.length) return {}
   const dates = klineData.value.map(d => d.date)
+  const range = calculateSixMonthRange(dates)
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-    grid: [
-      { left: '10%', right: '10%', top: '10%', height: '55%' },
-      { left: '10%', right: '10%', top: '70%', height: '20%' }
-    ],
-    xAxis: [
-      { type: 'category', data: dates, scale: true, boundaryGap: false, axisLine: { onZero: false }, splitLine: { show: false }, axisLabel: { show: false } },
-      { type: 'category', data: dates, gridIndex: 1, scale: true, boundaryGap: false, axisLine: { onZero: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: true } }
-    ],
-    yAxis: [
-      { scale: true, splitArea: { show: true } },
-      { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false } }
-    ],
+    grid: { left: '10%', right: '10%', top: '10%', bottom: '15%' },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      scale: true,
+      boundaryGap: false,
+      axisLine: { onZero: false, lineStyle: { color: '#909399' } },
+      axisTick: { show: true, alignWithLabel: true },
+      splitLine: { show: false },
+      axisLabel: { show: true, interval: 'auto', rotate: 0, fontSize: 11, color: '#606266' }
+    },
+    yAxis: { scale: true, splitArea: { show: true }, name: '价格' },
     dataZoom: [
-      { type: 'inside', xAxisIndex: [0, 1], start: 50, end: 100 },
-      { type: 'slider', xAxisIndex: [0, 1], start: 50, end: 100, bottom: '5%' }
+      { type: 'inside', start: range.start, end: range.end },
+      {
+        type: 'slider',
+        start: range.start,
+        end: range.end,
+        bottom: '2%',
+        height: 24,
+        handleStyle: {
+          color: '#409EFF',
+          borderColor: '#409EFF',
+          borderWidth: 2,
+          shadowBlur: 4,
+          shadowColor: 'rgba(64, 158, 255, 0.5)'
+        },
+        textStyle: {
+          color: '#303133',
+          fontWeight: 'bold',
+          fontSize: 12
+        },
+        borderColor: '#DCDFE6',
+        fillerColor: 'rgba(64, 158, 255, 0.15)',
+        backgroundColor: '#F5F7FA',
+        dataBackground: {
+          lineStyle: { color: '#C0C4CC', width: 1 },
+          areaStyle: { color: '#EBEEF5' }
+        },
+        selectedDataBackground: {
+          lineStyle: { color: '#409EFF', width: 2 },
+          areaStyle: { color: 'rgba(64, 158, 255, 0.2)' }
+        },
+        brushSelect: false
+      }
     ],
     series: [
       {
@@ -927,14 +1051,80 @@ const klineOption = computed(() => {
         type: 'candlestick',
         data: klineData.value.map(d => [d.open, d.close, d.low, d.high]),
         itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' }
-      },
+      }
+    ]
+  }
+})
+
+// 计算近6个月的dataZoom范围（约120个交易日）
+const calculateSixMonthRange = (dates) => {
+  if (!dates || dates.length === 0) return { start: 0, end: 100 }
+  const total = dates.length
+  const sixMonthDays = 120
+  if (total <= sixMonthDays) return { start: 0, end: 100 }
+  const startPercent = ((total - sixMonthDays) / total) * 100
+  return { start: startPercent, end: 100 }
+}
+
+// 大宗商品走势图配置
+const commodityChartOption = computed(() => {
+  if (!commodityChartData.value.length) return {}
+  const dates = commodityChartData.value.map(d => d.date)
+  const range = calculateSixMonthRange(dates)
+  return {
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    grid: { left: '10%', right: '10%', top: '10%', bottom: '15%' },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      scale: true,
+      boundaryGap: false,
+      axisLine: { onZero: false, lineStyle: { color: '#909399' } },
+      axisTick: { show: true, alignWithLabel: true },
+      splitLine: { show: false },
+      axisLabel: { show: true, interval: 'auto', rotate: 0, fontSize: 11, color: '#606266' }
+    },
+    yAxis: { scale: true, splitArea: { show: true }, name: '价格' },
+    dataZoom: [
+      { type: 'inside', start: range.start, end: range.end },
       {
-        name: '成交量',
-        type: 'bar',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: klineData.value.map(d => d.volume),
-        itemStyle: { color: (params) => klineData.value[params.dataIndex]?.close >= klineData.value[params.dataIndex]?.open ? '#f56c6c' : '#67c23a' }
+        type: 'slider',
+        start: range.start,
+        end: range.end,
+        bottom: '2%',
+        height: 24,
+        handleStyle: {
+          color: '#409EFF',
+          borderColor: '#409EFF',
+          borderWidth: 2,
+          shadowBlur: 4,
+          shadowColor: 'rgba(64, 158, 255, 0.5)'
+        },
+        textStyle: {
+          color: '#303133',
+          fontWeight: 'bold',
+          fontSize: 12
+        },
+        borderColor: '#DCDFE6',
+        fillerColor: 'rgba(64, 158, 255, 0.15)',
+        backgroundColor: '#F5F7FA',
+        dataBackground: {
+          lineStyle: { color: '#C0C4CC', width: 1 },
+          areaStyle: { color: '#EBEEF5' }
+        },
+        selectedDataBackground: {
+          lineStyle: { color: '#409EFF', width: 2 },
+          areaStyle: { color: 'rgba(64, 158, 255, 0.2)' }
+        },
+        brushSelect: false
+      }
+    ],
+    series: [
+      {
+        name: 'K线',
+        type: 'candlestick',
+        data: commodityChartData.value.map(d => [d.open, d.close, d.low, d.high]),
+        itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' }
       }
     ]
   }
@@ -991,24 +1181,25 @@ const volumeOption = computed(() => {
 })
 
 onMounted(() => {
-  console.log('onMounted, calling loadCacheStatus')
   loadCacheStatus()
 })
 
 // 切换到数据查看Tab时自动加载缓存状态
 watch(activeTab, (tab) => {
-  console.log('activeTab changed to:', tab)
   if (tab === 'dataview') {
-    console.log('calling loadCacheStatus from watch')
     loadCacheStatus()
+  }
+  if (tab === 'commodity') {
+    loadCommodityAssets()
   }
 })
 
 const handleTabClick = () => {
-  console.log('Tab clicked, activeTab:', activeTab.value)
   if (activeTab.value === 'dataview') {
-    console.log('Tab dataview active, calling loadCacheStatus')
     loadCacheStatus()
+  }
+  if (activeTab.value === 'commodity') {
+    loadCommodityAssets()
   }
 }
 </script>

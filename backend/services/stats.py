@@ -268,12 +268,14 @@ def get_monthly_position_details(db: Session, year: int, month: int) -> dict:
         if start_market_value == 0 and end_market_value == 0:
             continue
         
-        # 获取持仓名称（有关联ETF短名则优先使用）
+        # 获取持仓名称和关联ETF短名
         position = db.query(Position).filter(Position.code == code).first()
         if position:
-            name = position.linked_short_name if position.linked_short_name else position.name
+            name = position.name
+            linked_short_name = position.linked_short_name
         else:
             name = code
+            linked_short_name = None
         
         # 月初/月末投入成本 = 市值 - 累计盈亏
         start_cost = start_market_value - start_total_pnl
@@ -328,6 +330,7 @@ def get_monthly_position_details(db: Session, year: int, month: int) -> dict:
         positions.append({
             "code": code,
             "name": name,
+            "linked_short_name": linked_short_name,
             "start_market_value": round(start_market_value, 2),
             "end_market_value": round(end_market_value, 2),
             "start_cost": round(display_start_cost, 2),
@@ -375,13 +378,16 @@ def get_monthly_position_details(db: Session, year: int, month: int) -> dict:
         if abs(code_realized_pnl) >= 0.01:
             position = db.query(Position).filter(Position.code == trade.code).first()
             if position:
-                name = position.linked_short_name if position.linked_short_name else position.name
+                name = position.name
+                linked_short_name = position.linked_short_name
             else:
                 name = trade.name or trade.code
+                linked_short_name = None
             
             positions.append({
                 "code": trade.code,
                 "name": name,
+                "linked_short_name": linked_short_name,
                 "start_market_value": 0,
                 "end_market_value": 0,
                 "start_cost": round(total_buy_amount, 2) if total_buy_amount > 0 else 0,
@@ -476,12 +482,14 @@ def get_yearly_position_details(db: Session, year: int) -> dict:
         if start_market_value == 0 and end_market_value == 0 and abs(year_pnl) < 0.01:
             continue
         
-        # 获取持仓名称（有关联ETF短名则优先使用）
+        # 获取持仓名称和关联ETF短名
         position = db.query(Position).filter(Position.code == code).first()
         if position:
-            name = position.linked_short_name if position.linked_short_name else position.name
+            name = position.name
+            linked_short_name = position.linked_short_name
         else:
             name = code
+            linked_short_name = None
         
         # 年初/年末投入成本 = 市值 - 累计盈亏
         start_cost = start_market_value - start_total_pnl
@@ -554,6 +562,7 @@ def get_yearly_position_details(db: Session, year: int) -> dict:
         positions.append({
             "code": code,
             "name": name,
+            "linked_short_name": linked_short_name,
             "start_market_value": round(start_market_value, 2),
             "end_market_value": round(end_market_value, 2),
             "start_cost": round(display_start_cost, 2),
@@ -599,12 +608,14 @@ def get_yearly_position_details(db: Session, year: int) -> dict:
         
         # 只添加有盈亏的已清仓标的
         if abs(code_realized_pnl) >= 0.01:
-            # 获取标的名称（有关联ETF短名则优先使用）
+            # 获取标的名称和关联ETF短名
             position = db.query(Position).filter(Position.code == trade.code).first()
             if position:
-                name = position.linked_short_name if position.linked_short_name else position.name
+                name = position.name
+                linked_short_name = position.linked_short_name
             else:
                 name = trade.name or trade.code
+                linked_short_name = None
             
             # 已清仓标的无持仓收益
             code_unrealized_pnl = 0.0
@@ -612,6 +623,7 @@ def get_yearly_position_details(db: Session, year: int) -> dict:
             positions.append({
                 "code": trade.code,
                 "name": name,
+                "linked_short_name": linked_short_name,
                 "start_market_value": 0,
                 "end_market_value": 0,
                 "start_cost": round(total_buy_amount, 2) if total_buy_amount > 0 else 0,

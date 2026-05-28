@@ -116,3 +116,36 @@ class SyncLog(Base):
     sync_type = Column(String(20), nullable=False, default="daily")  # daily / history
     synced_at = Column(DateTime, default=datetime.now)
     record_count = Column(Integer, default=0)
+
+
+class StopLossConfig(Base):
+    """止盈线配置表：与利润等级关联，存储各等级对应的止盈线参数"""
+    __tablename__ = "stop_loss_config"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    profit_level_key = Column(String(20), nullable=False, unique=True)  # 关联 profit_level_config.level_key
+    # 止盈线计算参数
+    half_position_ratio = Column(Float, nullable=True)  # 减半仓线系数 (Pmax回撤或成本保护时用)
+    clear_position_ratio = Column(Float, nullable=True)  # 清仓线系数 (Pmax回撤或成本保护时用)
+    calculation_mode = Column(String(20), default="pmax_drawdown")  # pmax_drawdown=基于Pmax回撤, profit_retention=基于Profit_max保留比例, cost_protection=基于成本保护
+    profit_retention_half = Column(Float, nullable=True)  # 保留浮盈比例(减半仓，基于Profit_max时用)
+    profit_retention_clear = Column(Float, nullable=True)  # 保留浮盈比例(清仓，基于Profit_max时用)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class ProfitLevelConfig(Base):
+    """利润等级配置表：存储利润状态分级的阈值"""
+    __tablename__ = "profit_level_config"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    level_name = Column(String(20), nullable=False, unique=True)  # 极厚利润/中厚利润/浅厚利润/中利润/薄利润/新建仓宽容/薄亏损观察/中亏损决策/厚亏损清仓
+    level_key = Column(String(20), nullable=False, unique=True)   # thick_profit_3/thick_profit_2/thick_profit_1/medium_profit/thin_profit/thin_loss_new/thin_loss_watch/medium_loss/thick_loss
+    level_code = Column(String(10), nullable=False, unique=True)  # F1.3/F1.2/F1.1/F2/F3/L1/L2/L3/L4
+    pnl_threshold = Column(Float, nullable=False)  # 利润阈值下限(%), 基于pnlPeak或pnlNow
+    pnl_threshold_max = Column(Float, nullable=True)  # 利润阈值上限(%), None表示无上限
+    use_peak_pnl = Column(Integer, default=1)  # 1=使用pnlPeak判断, 0=使用pnlNow判断
+    sort_order = Column(Integer, nullable=False)  # 排序顺序(从高到低)
+    display_color = Column(String(10), nullable=False)  # 显示颜色: success/warning/danger
+    hold_days_min = Column(Integer, nullable=True)  # 持仓天数最小值(≥), None表示无限制
+    hold_days_max = Column(Integer, nullable=True)  # 持仓天数最大值(<), None表示无限制
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

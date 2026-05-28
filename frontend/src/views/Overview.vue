@@ -66,14 +66,14 @@
             </div>
           </template>
           <el-table :data="sortedPositions" stripe style="width: 100%" @row-click="goDetail" @sort-change="handleSort" :default-sort="{ prop: 'total_pnl', order: 'descending' }" v-loading="loading">
-            <el-table-column prop="code" label="代码" width="100" />
+            <el-table-column prop="code" label="代码" width="80" />
             <el-table-column prop="name" label="名称" width="120">
-              <template #default="{ row }">{{ row.name }}</template>
+              <template #default="{ row }">{{ row.linked_short_name || row.name }}</template>
             </el-table-column>
-            <el-table-column label="成本价" width="100">
+            <el-table-column label="成本价" width="80">
               <template #default="{ row }">{{ row.avg_cost?.toFixed(4) }}</template>
             </el-table-column>
-            <el-table-column label="现价" width="100">
+            <el-table-column label="现价" width="80">
               <template #default="{ row }">{{ row.current_price?.toFixed(4) }}</template>
             </el-table-column>
             <el-table-column label="市值" width="120" sortable="custom" prop="market_value">
@@ -82,10 +82,10 @@
             <el-table-column label="占比" width="80" sortable="custom" prop="weight">
               <template #default="{ row }">{{ row.weight }}%</template>
             </el-table-column>
-            <el-table-column label="总收益" width="140" sortable="custom" prop="total_pnl">
+            <el-table-column label="总收益" width="120" sortable="custom" prop="total_pnl">
               <template #default="{ row }">
                 <span :class="row.total_pnl >= 0 ? 'profit' : 'loss'">
-                  {{ row.total_pnl >= 0 ? '+' : '' }}¥{{ row.total_pnl?.toLocaleString() }}
+                  {{ row.total_pnl >= 0 ? '+' : '' }}¥{{ row.total_pnl?.toLocaleString() }}<br/>
                   ({{ row.total_pnl_pct >= 0 ? '+' : '' }}{{ row.total_pnl_pct }}%)
                 </span>
               </template>
@@ -93,7 +93,8 @@
             <el-table-column :label="latestDateLabel + '盈亏'" width="120" sortable="custom" prop="daily_pnl">
               <template #default="{ row }">
                 <span :class="row.daily_pnl >= 0 ? 'profit' : 'loss'">
-                  {{ row.daily_pnl >= 0 ? '+' : '' }}¥{{ row.daily_pnl?.toLocaleString() }}
+                  {{ row.daily_pnl >= 0 ? '+' : '' }}¥{{ row.daily_pnl?.toLocaleString() }}<br/>
+                  ({{ row.daily_pnl_pct >= 0 ? '+' : '' }}{{ row.daily_pnl_pct }}%)
                 </span>
               </template>
             </el-table-column>

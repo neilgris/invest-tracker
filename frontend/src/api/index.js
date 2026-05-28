@@ -57,6 +57,7 @@ export const analysisCacheSyncBatch = (data) => api.post('/analysis/cache/sync-b
 export const analysisCacheSyncL1 = () => api.post('/analysis/cache/sync-l1')
 export const analysisCacheSyncL2 = () => api.post('/analysis/cache/sync-l2')
 export const analysisCacheSyncL6 = () => api.post('/analysis/cache/sync-l6')
+export const analysisCacheSyncL6C = () => api.post('/analysis/cache/sync-l6c')
 export const analysisCacheStatus = () => api.get('/analysis/cache/status')
 export const analysisCacheProgress = () => api.get('/analysis/cache/progress')
 export const analysisPearson = (data) => api.post('/analysis/correlation/pearson', data)

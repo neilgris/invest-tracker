@@ -28,6 +28,10 @@
           <el-icon><Data-Line /></el-icon>
           <span>行情</span>
         </el-menu-item>
+        <el-menu-item index="/config">
+          <el-icon><Setting /></el-icon>
+          <span>配置</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-main style="background: #f0f2f5; padding: 20px">
@@ -37,7 +41,7 @@
 </template>
 
 <script setup>
-import { HomeFilled, List, TrendCharts, DataLine } from '@element-plus/icons-vue'
+import { HomeFilled, List, TrendCharts, DataLine, Setting } from '@element-plus/icons-vue'
 </script>
 
 <style>

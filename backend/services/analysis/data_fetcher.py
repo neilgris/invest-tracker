@@ -191,6 +191,38 @@ def _ak_sector_hist(code: str, start: str, end: str) -> pd.DataFrame | None:
     return _try_sw_sector_hist(code, start, end)
 
 
+
+def _ak_domestic_commodity_hist(code: str, start: str, end: str) -> pd.DataFrame | None:
+    """拉取国内期货连续合约历史行情（新浪财经）"""
+    try:
+        df = ak.futures_zh_daily_sina(symbol=code)
+        if df is None or df.empty:
+            return None
+        
+        # 列名标准化
+        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+        df = df.rename(columns={
+            "open": "open", "close": "close", "high": "high",
+            "low": "low", "volume": "volume"
+        })
+        
+        # 计算涨跌幅
+        if "pct_change" not in df.columns:
+            df["pct_change"] = df["close"].pct_change() * 100
+        
+        # 添加turnover列（期货通常没有成交额字段）
+        df["turnover"] = None
+        
+        # 筛选日期范围（start/end 是 YYYYMMDD 格式，需要转换）
+        start_fmt = pd.to_datetime(start, format='%Y%m%d').strftime('%Y-%m-%d')
+        end_fmt = pd.to_datetime(end, format='%Y%m%d').strftime('%Y-%m-%d')
+        df = df[(df["date"] >= start_fmt) & (df["date"] <= end_fmt)]
+        
+        return df[["date", "open", "close", "high", "low", "volume", "turnover", "pct_change"]]
+    except Exception as e:
+        print(f"[domestic_commodity] {code} 拉取失败: {e}")
+        return None
+
 def _ak_commodity_hist(code: str, start: str, end: str) -> pd.DataFrame | None:
     """拉取国际大宗商品历史行情（外盘期货）"""
     try:
@@ -297,11 +329,16 @@ def _fetch_and_cache(
         # 确定实际需要拉的区间（与请求区间取并集）
         target_start = min(start_date, db_min)
         target_end   = max(end_date, db_max)
-        # 若请求区间已在 DB 范围内且够新（最近3天内），跳过
-        if start_date >= db_min and end_date <= db_max and end_date >= date.today() - timedelta(days=3):
+        
+        # 新逻辑：只要 DB 最新数据不是 T-1（昨日），就从 db_max+1 拉取到 T-1
+        yesterday = date.today() - timedelta(days=1)
+        if db_max >= yesterday:
+            # DB 已是最新（到昨日），无需拉取
             return 0
-        # 从 DB 已有范围之外开始拉
+        
+        # 从 DB 最后日期+1 开始拉取，到昨日为止
         s_start = (db_max + timedelta(days=1)).strftime("%Y%m%d")
+        s_end = yesterday.strftime("%Y%m%d")
         if s_start > s_end:
             return 0
 
@@ -313,7 +350,11 @@ def _fetch_and_cache(
     elif asset_type == "fund":
         df = _ak_fund_nav_hist(code, s_start, s_end)
     elif asset_type == "commodity":
-        df = _ak_commodity_hist(code, s_start, s_end)
+        # 区分国际大宗商品(L6)和国内期货(L6C)
+        if code in L6C_DOMESTIC_COMMODITY_CODES:
+            df = _ak_domestic_commodity_hist(code, s_start, s_end)
+        else:
+            df = _ak_commodity_hist(code, s_start, s_end)
     else:  # stock / etf / default
         df = _ak_stock_hist(code, s_start, s_end)
 
@@ -423,6 +464,12 @@ L6_COMMODITY_CODES = {
     "CAD": "美棉花",
     "LHC": "瘦肉猪",
 }
+
+L6C_DOMESTIC_COMMODITY_CODES = {
+    "J0": "焦炭连续",
+    "JM0": "焦煤连续"
+}
+
 
 
 # ══════════════════════════════════════════════════════
@@ -997,6 +1044,80 @@ def sync_l6_commodity() -> dict:
         "results": results
     }
 
+
+
+
+
+def sync_l6c_domestic_commodity() -> dict:
+    """
+    同步 L6C 国内期货（焦炭、焦煤等）
+    - 拉取全部历史数据
+    """
+    codes = list(L6C_DOMESTIC_COMMODITY_CODES.keys())
+    names = list(L6C_DOMESTIC_COMMODITY_CODES.values())
+    total = len(codes)
+    
+    _set_progress("L6C国内期货同步", 0, total, "", f"开始同步 {total} 个品种...")
+    
+    db = SessionLocal()
+    results = []
+    total_saved = 0
+    
+    try:
+        for i, (code, name) in enumerate(zip(codes, names), 1):
+            _set_progress("L6C国内期货同步", i, total, code, f"正在同步 {name} ({i}/{total})")
+            print(f"[{i}/{total}] {code} {name}")
+            
+            try:
+                # 拉取全部历史
+                saved = _fetch_and_cache(db, code, "commodity", None, None)
+                
+                # 更新或创建元数据
+                meta = db.query(AssetMeta).filter(AssetMeta.code == code).first()
+                if not meta:
+                    db.add(AssetMeta(
+                        code=code,
+                        name=name,
+                        asset_type="commodity",
+                        category="国内期货",
+                        source="sina",
+                        is_cached=1
+                    ))
+                else:
+                    meta.name = name
+                    meta.asset_type = "commodity"
+                    meta.category = "国内期货"
+                    meta.source = "sina"
+                    meta.is_cached = 1
+                
+                db.commit()
+                results.append({"code": code, "name": name, "ok": True, "saved": saved})
+                total_saved += saved
+                print(f"  ✓ 保存 {saved} 条")
+                
+            except Exception as e:
+                print(f"  ✗ 失败: {e}")
+                results.append({"code": code, "name": name, "ok": False, "error": str(e)})
+                db.rollback()
+                continue
+            
+            # 5秒间隔限速
+            if i < total:
+                time.sleep(_MIN_INTERVAL)
+    
+    finally:
+        db.close()
+        _clear_progress()
+    
+    success_count = sum(1 for r in results if r.get("ok"))
+    return {
+        "ok": True,
+        "message": f"同步完成: {total} 个品种, {success_count} 成功, {total - success_count} 失败, 共 {total_saved} 条数据",
+        "total": total,
+        "success": success_count,
+        "saved": total_saved,
+        "results": results
+    }
 
 def get_cache_status() -> dict:
     """返回缓存概况"""

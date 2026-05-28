@@ -142,6 +142,13 @@ def sync_l6_commodity():
     return _sync()
 
 
+@router.post("/cache/sync-l6c")
+def sync_l6c_domestic_commodity():
+    """同步 L6C 国内大宗商品（焦炭/焦煤等期货连续合约）"""
+    from services.analysis.data_fetcher import sync_l6c_domestic_commodity as _sync
+    return _sync()
+
+
 @router.post("/cache/sync-l2-em")
 def sync_l2_em():
     """同步 L2 行业板块（东方财富源）"""

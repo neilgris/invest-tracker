@@ -1,10 +1,16 @@
+import os
+
+# 设置代理（只影响本程序，在导入akshare等库之前）
+os.environ.setdefault('http_proxy', 'http://127.0.0.1:6789')
+os.environ.setdefault('https_proxy', 'http://127.0.0.1:6789')
+
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from database import init_db
 from scheduler import start_scheduler
-from routers import trades, positions, quotes, stats, analysis
+from routers import trades, positions, quotes, stats, analysis, config
 
 app = FastAPI(title="Invest Tracker", description="投资追踪平台")
 
@@ -14,6 +20,7 @@ app.include_router(positions.router)
 app.include_router(quotes.router)
 app.include_router(stats.router)
 app.include_router(analysis.router)
+app.include_router(config.router)
 
 # 静态文件（前端）
 STATIC_DIR = Path(__file__).parent / "static"

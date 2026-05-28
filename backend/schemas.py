@@ -1,9 +1,8 @@
 from pydantic import BaseModel
-from typing import Optional
 from datetime import date, datetime
+from typing import Optional, List
 
 
-# --- Trade ---
 class TradeCreate(BaseModel):
     code: str
     name: str
@@ -12,7 +11,7 @@ class TradeCreate(BaseModel):
     amount: float
     quantity: Optional[float] = None
     trade_date: date
-    fee: Optional[float] = 0.0
+    fee: float = 0.0
 
 
 class TradeUpdate(BaseModel):
@@ -26,51 +25,82 @@ class TradeUpdate(BaseModel):
     fee: Optional[float] = None
 
 
-class TradeOut(TradeCreate):
+class TradeOut(BaseModel):
     id: int
-    created_at: Optional[datetime] = None
+    code: str
+    name: str
+    direction: str
+    price: float
+    amount: float
+    quantity: Optional[float]
+    trade_date: date
+    fee: float
+    created_at: datetime
 
     class Config:
         from_attributes = True
 
 
-# --- Position ---
 class PositionOut(BaseModel):
     id: int
     code: str
     name: str
-    category: Optional[str] = None
-    linked_code: Optional[str] = None
-    linked_name: Optional[str] = None
-    linked_price: Optional[float] = None
-    linked_change_pct: Optional[float] = None
+    category: Optional[str]
+    linked_code: Optional[str]
+    linked_name: Optional[str]
+    linked_short_name: Optional[str]
     total_cost: float
     quantity: float
     avg_cost: float
     current_price: float
-    market_value: Optional[float] = None
-    total_pnl: Optional[float] = None
-    total_pnl_pct: Optional[float] = None
-    daily_pnl: Optional[float] = None
-    daily_pnl_pct: Optional[float] = None
-    weight: Optional[float] = None
-    updated_at: Optional[datetime] = None
+    market_value: float
+    total_pnl: float
+    total_pnl_pct: float
+    daily_pnl: float
+    daily_pnl_pct: float
+    weight: float
+    is_closed: int
+    updated_at: datetime
+    linked_info: Optional[dict] = None
 
     class Config:
         from_attributes = True
 
 
-class PositionCategoryUpdate(BaseModel):
-    category: Optional[str] = None  # 允许清空分类
+class PositionDetailOut(BaseModel):
+    code: str
+    name: str
+    short_name: Optional[str]
+    category: Optional[str]
+    linked_code: Optional[str]
+    linked_name: Optional[str]
+    linked_short_name: Optional[str]
+    total_cost: float
+    quantity: float
+    avg_cost: float
+    current_price: float
+    market_value: float
+    total_pnl: float
+    total_pnl_pct: float
+    is_closed: int
+
+    class Config:
+        from_attributes = True
 
 
-class PositionLinkedCodeUpdate(BaseModel):
-    linked_code: Optional[str] = None  # 允许清空关联
-    linked_name: Optional[str] = None  # 关联ETF名称
-    linked_short_name: Optional[str] = None  # 关联ETF短名称
+class DailySnapshotOut(BaseModel):
+    id: int
+    code: str
+    date: date
+    close: float
+    market_value: Optional[float]
+    daily_pnl: Optional[float]
+    total_pnl: Optional[float]
+
+    class Config:
+        from_attributes = True
 
 
-# --- Overview ---
 class OverviewOut(BaseModel):
     total_cost: float
     total_market_value: float
@@ -78,56 +108,140 @@ class OverviewOut(BaseModel):
     total_pnl_pct: float
     daily_pnl: float
     daily_pnl_pct: float
-    latest_date: Optional[str] = None  # 最新有数据日期
     position_count: int
+    latest_date: str | None = None
 
 
-# --- DailySnapshot ---
-class SnapshotOut(BaseModel):
-    id: int
+class YearlyStats(BaseModel):
+    year: int
+    realized_pnl: float
+    unrealized_pnl: float
+    total_pnl: float
+    return_pct: float
+
+
+class MonthlyStats(BaseModel):
+    year: int
+    month: int
+    realized_pnl: float
+    unrealized_pnl: float
+    total_pnl: float
+    return_pct: float
+
+
+class AssetMetaOut(BaseModel):
+    code: str
+    name: str
+    asset_type: str
+    category: Optional[str]
+    source: Optional[str]
+    benchmark_index: Optional[str]
+    list_date: Optional[date]
+    is_cached: int
+
+    class Config:
+        from_attributes = True
+
+
+class QuoteOut(BaseModel):
     code: str
     date: date
-    open: Optional[float] = None
-    close: Optional[float] = None
-    high: Optional[float] = None
-    low: Optional[float] = None
-    market_value: Optional[float] = None
-    daily_pnl: Optional[float] = None
-    total_pnl: Optional[float] = None
+    close: float
 
     class Config:
         from_attributes = True
 
 
-# --- BaselineConfig ---
-class BaselineConfigCreate(BaseModel):
-    etf_code: str
-    baseline_code: str
-    baseline_name: str
-
-
-class BaselineConfigOut(BaselineConfigCreate):
+class StopLossConfigOut(BaseModel):
     id: int
+    profit_level_key: str
+    # 关联的利润等级信息
+    level_name: Optional[str] = None
+    level_code: Optional[str] = None
+    pnl_min: Optional[float] = None
+    pnl_max: Optional[float] = None
+    # 止盈线参数
+    half_position_ratio: Optional[float]
+    clear_position_ratio: Optional[float]
+    calculation_mode: str  # pmax_drawdown, profit_retention, cost_protection
+    profit_retention_half: Optional[float]
+    profit_retention_clear: Optional[float]
+    updated_at: datetime
 
     class Config:
         from_attributes = True
 
 
-# --- Monthly Stats ---
-class MonthlyStat(BaseModel):
-    month: str  # YYYY-MM
-    pnl: float
-    cost: float
-    pnl_pct: float
+class StopLossConfigUpdate(BaseModel):
+    half_position_ratio: Optional[float] = None
+    clear_position_ratio: Optional[float] = None
+    calculation_mode: str = "pmax_drawdown"
+    profit_retention_half: Optional[float] = None
+    profit_retention_clear: Optional[float] = None
 
 
-# --- Chart Data ---
-class ChartPoint(BaseModel):
-    date: str
-    value: float
+class StopLossConfigReset(BaseModel):
+    confirm: bool = False
 
 
+# Profit Level Config schemas
+class ProfitLevelConfigOut(BaseModel):
+    id: int
+    level_name: str
+    level_key: str
+    level_code: str
+    pnl_threshold: float
+    pnl_threshold_max: Optional[float]
+    use_peak_pnl: int
+    sort_order: int
+    display_color: str
+    hold_days_min: Optional[int] = None
+    hold_days_max: Optional[int] = None
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProfitLevelConfigUpdate(BaseModel):
+    level_name: str
+    level_code: str
+    pnl_threshold: float
+    pnl_threshold_max: Optional[float] = None
+    use_peak_pnl: int = 1
+    display_color: str
+    hold_days_min: Optional[int] = None
+    hold_days_max: Optional[int] = None
+
+
+# Baseline Config schemas
+class BaselineConfigCreate(BaseModel):
+    code: str
+    baseline_code: str
+
+
+class BaselineConfigOut(BaseModel):
+    id: int
+    code: str
+    baseline_code: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# Trade marker for position detail chart
 class TradeMarker(BaseModel):
-    date: str
+    date: date
+    type: str  # buy, sell, dividend
     price: float
-    direction: str  # buy / sell / dividend
+    amount: float
+
+
+# Position update schemas
+class PositionCategoryUpdate(BaseModel):
+    category: Optional[str] = None
+
+
+class PositionLinkedCodeUpdate(BaseModel):
+    linked_code: Optional[str] = None

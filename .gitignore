@@ -39,3 +39,7 @@ backend/static/index.html
 # Backup files
 *.backup.*
 *.log
+
+# Database backups
+*.db_*
+invest.db

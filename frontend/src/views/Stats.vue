@@ -116,7 +116,9 @@
                 :default-sort="{ prop: 'pnl', order: 'descending' }"
               >
                 <el-table-column prop="code" label="代码" width="85" sortable />
-                <el-table-column prop="name" label="名称" width="140" show-overflow-tooltip />
+                <el-table-column label="名称" width="140" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.linked_short_name || row.name }}</template>
+                </el-table-column>
                 <el-table-column prop="end_market_value" label="持仓市值" width="110" sortable>
                   <template #default="{ row }">¥{{ row.end_market_value?.toLocaleString() }}</template>
                 </el-table-column>
@@ -290,7 +292,9 @@
                 :default-sort="{ prop: 'pnl', order: 'descending' }"
               >
                 <el-table-column prop="code" label="代码" width="85" sortable />
-                <el-table-column prop="name" label="名称" width="140" show-overflow-tooltip />
+                <el-table-column label="名称" width="140" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.linked_short_name || row.name }}</template>
+                </el-table-column>
                 <el-table-column prop="end_market_value" label="持仓市值" width="110" sortable>
                   <template #default="{ row }">¥{{ row.end_market_value?.toLocaleString() }}</template>
                 </el-table-column>
