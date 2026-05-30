@@ -145,11 +145,11 @@ def validate_code(code: str):
     from services.market import _search_code, get_stock_name
     result = _search_code(code)
     if result:
-        return {"valid": True, "code": code, "name": result["name"], "short_name": result.get("short_name", result["name"])}
+        return {"valid": True, "code": code, "name": result["name"]}
     # fallback
     name = get_stock_name(code)
     valid = bool(name)
-    return {"valid": valid, "code": code, "name": name, "short_name": name}
+    return {"valid": valid, "code": code, "name": name}
 
 
 @router.get("/fund-info/{code}")
@@ -181,7 +181,6 @@ def get_fund_info(code: str, date: str = None):
         "valid": True,
         "code": code,
         "name": result["name"],
-        "short_name": result.get("short_name", result["name"]),
         "is_fund": True,
         "date": date,
         "nav": nav
@@ -224,7 +223,7 @@ def get_dividends(code: str = None):
 @router.post("/dividends/confirm")
 def confirm_dividends(dividends: list[dict]):
     """确认分红再投资，将分红记录写入交易表
-    请求体: [{code, name, short_name, date, dividend_per_unit, quantity, dividend_amount, price, reinvest_qty}, ...]
+    请求体: [{code, name, date, dividend_per_unit, quantity, dividend_amount, price, reinvest_qty}, ...]
     """
     from database import SessionLocal
     from models import Trade
@@ -248,7 +247,6 @@ def confirm_dividends(dividends: list[dict]):
             trade = Trade(
                 code=div["code"],
                 name=div["name"],
-                short_name=div.get("short_name", div["name"]),
                 direction="dividend",
                 price=div["price"],
                 amount=div["dividend_amount"],
@@ -293,3 +291,95 @@ def get_last_sync(db: Session = Depends(get_db)):
         "sync_type": last_sync.sync_type,
         "record_count": last_sync.record_count
     }
+
+
+@router.get("/pe/index/{index_code}")
+def get_index_pe_data(index_code: str, db: Session = Depends(get_db)):
+    """直接通过指数代码查询 PE 历史（用于主题指数等场景）"""
+    from models import IndexPEHistory
+
+    pe_records = db.query(IndexPEHistory).filter(
+        IndexPEHistory.code == index_code
+    ).order_by(IndexPEHistory.date).all()
+
+    return {
+        "ok": True,
+        "index_code": index_code,
+        "data": [
+            {
+                "date": r.date.isoformat(),
+                "pe1": r.pe1,
+                "pe2": r.pe2,
+                "dividend_yield1": r.dividend_yield1,
+                "dividend_yield2": r.dividend_yield2
+            }
+            for r in pe_records
+        ]
+    }
+
+
+@router.get("/pe/{etf_code}")
+def get_etf_pe_data(etf_code: str, db: Session = Depends(get_db)):
+    """获取ETF关联指数的PE历史数据
+    
+    通过持仓代码查询其关联的指数，返回该指数的PE历史数据
+    """
+    from models import Position, IndexPEHistory
+    from sqlalchemy import desc
+    
+    # 查询持仓对应的指数代码（支持联接基金和直接ETF持仓）
+    position = db.query(Position).filter(
+        Position.code == etf_code
+    ).first()
+    
+    if not position or not position.benchmark_index:
+        return {
+            "ok": False,
+            "message": f"持仓 {etf_code} 未找到或没有关联指数",
+            "data": []
+        }
+    
+    index_code = position.benchmark_index
+    
+    # 查询PE历史数据
+    pe_records = db.query(IndexPEHistory).filter(
+        IndexPEHistory.code == index_code
+    ).order_by(IndexPEHistory.date).all()
+    
+    if not pe_records:
+        return {
+            "ok": True,
+            "etf_code": etf_code,
+            "index_code": index_code,
+            "message": "暂无PE数据，请等待数据同步",
+            "data": []
+        }
+    
+    return {
+        "ok": True,
+        "etf_code": etf_code,
+        "index_code": index_code,
+        "data": [
+            {
+                "date": r.date.isoformat(),
+                "pe1": r.pe1,
+                "pe2": r.pe2,
+                "dividend_yield1": r.dividend_yield1,
+                "dividend_yield2": r.dividend_yield2
+            }
+            for r in pe_records
+        ]
+    }
+
+
+@router.post("/pe/sync")
+def sync_pe_data(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """手动触发指数PE数据同步"""
+    from services.market import sync_index_pe_data
+    
+    def _sync():
+        sync_index_pe_data()
+    
+    background_tasks.add_task(_sync)
+    
+    return {"ok": True, "message": "PE数据同步任务已启动"}

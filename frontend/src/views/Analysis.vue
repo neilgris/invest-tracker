@@ -47,6 +47,7 @@
                   <div>
                     <el-button type="primary" size="small" @click="syncL1" :loading="loading.syncL1">同步L1宽基</el-button>
                     <el-button type="success" size="small" @click="syncL2" :loading="loading.syncL2">同步L2行业</el-button>
+                    <el-button type="info" size="small" @click="syncL3Theme" :loading="loading.syncL3Theme">同步L3主题指数</el-button>
                     <el-button type="warning" size="small" @click="syncL6" :loading="loading.syncL6">同步L6国际大宗</el-button>
                     <el-button type="danger" size="small" @click="syncL6C" :loading="loading.syncL6C">同步L6C国内大宗</el-button>
                   </div>
@@ -82,7 +83,7 @@
               </div>
               <div style="color: #909399; font-size: 12px">
                 <p>L1: 7个宽基指数(上证/深证/沪深300/中证500/中证1000/创业板/科创50)</p>
-                <p>L2: ~90个行业板块 | L3: 概念板块 | L4: ETF | L5: 个股 | L6: 国际大宗商品</p>
+                <p>L2: ~90个行业板块 | L3主题: 持仓关联指数 | L3概念: 概念板块 | L4: ETF | L5: 个股 | L6: 国际大宗商品</p>
               </div>
             </el-card>
           </el-col>
@@ -111,212 +112,6 @@
                   </template>
                 </el-table-column>
               </el-table>
-            </el-card>
-          </el-col>
-        </el-row>
-      </el-tab-pane>
-
-      <!-- Tab 2: 相关性分析 -->
-      <el-tab-pane label="相关性分析" name="correlation">
-        <!-- 全局日期范围设置 -->
-        <el-card shadow="hover" style="margin-bottom: 20px">
-          <template #header>
-            <div style="display: flex; justify-content: space-between; align-items: center">
-              <span>分析时间范围</span>
-              <div>
-                <el-radio-group v-model="globalDateRange.preset" size="small" @change="onDatePresetChange">
-                  <el-radio-button label="1y">近1年</el-radio-button>
-                  <el-radio-button label="3y">近3年</el-radio-button>
-                  <el-radio-button label="5y">近5年</el-radio-button>
-                  <el-radio-button label="10y">近10年</el-radio-button>
-                  <el-radio-button label="custom">自定义</el-radio-button>
-                </el-radio-group>
-              </div>
-            </div>
-          </template>
-          <el-form :inline="true">
-            <el-form-item label="起始日期">
-              <el-date-picker v-model="globalDateRange.start" type="date" placeholder="起始日期" format="YYYY-MM-DD" value-format="YYYY-MM-DD" :disabled="globalDateRange.preset !== 'custom'" />
-            </el-form-item>
-            <el-form-item label="结束日期">
-              <el-date-picker v-model="globalDateRange.end" type="date" placeholder="结束日期" format="YYYY-MM-DD" value-format="YYYY-MM-DD" :disabled="globalDateRange.preset !== 'custom'" />
-            </el-form-item>
-            <el-form-item>
-              <el-tag v-if="globalDateRange.start && globalDateRange.end" type="info" size="small">
-                {{ globalDateRange.start }} ~ {{ globalDateRange.end }}
-              </el-tag>
-            </el-form-item>
-          </el-form>
-        </el-card>
-        <el-row :gutter="20">
-          <el-col :span="8">
-            <el-card shadow="hover" style="margin-bottom: 20px">
-              <template #header><span>两两相关性 (Pearson)</span></template>
-              <el-form label-width="80px">
-                <el-form-item label="资产A">
-                  <el-input v-model="pearsonForm.code_a" placeholder="000001" />
-                </el-form-item>
-                <el-form-item label="资产B">
-                  <el-input v-model="pearsonForm.code_b" placeholder="399001" />
-                </el-form-item>
-                <el-form-item>
-                  <el-button type="primary" @click="calcPearson" :loading="loading.pearson">计算</el-button>
-                </el-form-item>
-              </el-form>
-              <div v-if="pearsonResult.ok" class="result-box">
-                <p>相关系数: <strong :class="pearsonResult.correlation > 0 ? 'profit' : 'loss'">{{ pearsonResult.correlation?.toFixed(4) }}</strong></p>
-                <p>P值: {{ pearsonResult.p_value?.toExponential(2) }}</p>
-                <p>样本数: {{ pearsonResult.n }}</p>
-              </div>
-            </el-card>
-
-            <el-card shadow="hover">
-              <template #header><span>领先滞后分析 (CCF)</span></template>
-              <el-form label-width="80px">
-                <el-form-item label="资产A">
-                  <el-input v-model="ccfForm.code_a" placeholder="000300" />
-                </el-form-item>
-                <el-form-item label="资产B">
-                  <el-input v-model="ccfForm.code_b" placeholder="399006" />
-                </el-form-item>
-                <el-form-item label="最大滞后">
-                  <el-input-number v-model="ccfForm.max_lag" :min="1" :max="30" />
-                </el-form-item>
-                <el-form-item>
-                  <el-button type="primary" @click="calcCCF" :loading="loading.ccf">计算</el-button>
-                </el-form-item>
-              </el-form>
-              <div v-if="ccfResult.ok" class="result-box">
-                <p>{{ ccfResult.interpretation }}</p>
-                <p>最佳滞后: {{ ccfResult.best_lag }} 期</p>
-                <p>最佳相关: {{ ccfResult.best_corr?.toFixed(4) }}</p>
-              </div>
-            </el-card>
-          </el-col>
-
-          <el-col :span="16">
-            <el-card shadow="hover" style="margin-bottom: 20px">
-              <template #header>
-                <div style="display: flex; justify-content: space-between; align-items: center">
-                  <span>相关矩阵</span>
-                  <el-button type="primary" size="small" @click="calcMatrix" :loading="loading.matrix">计算</el-button>
-                </div>
-              </template>
-              <el-form :inline="true">
-                <el-form-item label="资产列表">
-                  <el-select-v2
-                    v-model="matrixForm.codes"
-                    :options="cacheAssetOptions"
-                    placeholder="选择资产"
-                    multiple
-                    clearable
-                    style="width: 400px"
-                  />
-                </el-form-item>
-              </el-form>
-              <div v-if="matrixResult.ok">
-                <el-table :data="matrixTableData" size="small" border>
-                  <el-table-column prop="code" label="代码" width="100" fixed />
-                  <el-table-column v-for="c in (matrixResult.codes || [])" :key="c" :prop="c" :label="c" width="90">
-                    <template #default="{ row }">
-                      <span :class="row[c] > 0 ? 'profit' : row[c] < 0 ? 'loss' : ''">{{ row[c]?.toFixed(2) }}</span>
-                    </template>
-                  </el-table-column>
-                </el-table>
-              </div>
-            </el-card>
-
-            <el-card shadow="hover">
-              <template #header><span>CCF 交叉相关图</span></template>
-              <v-chart v-if="ccfResult.ok" :option="ccfChartOption" style="height: 300px" autoresize />
-              <el-empty v-else description="请先计算CCF" />
-            </el-card>
-          </el-col>
-        </el-row>
-      </el-tab-pane>
-
-      <!-- Tab 3: 特征规律挖掘 -->
-      <el-tab-pane label="规律挖掘" name="pattern">
-        <el-row :gutter="20">
-          <el-col :span="8">
-            <el-card shadow="hover" style="margin-bottom: 20px">
-              <template #header><span>季节效应分析</span></template>
-              <el-form label-width="80px">
-                <el-form-item label="资产代码">
-                  <el-input v-model="seasonForm.code" placeholder="000001" />
-                </el-form-item>
-                <el-form-item>
-                  <el-button type="primary" @click="calcSeasonality" :loading="loading.season">分析</el-button>
-                </el-form-item>
-              </el-form>
-            </el-card>
-
-            <el-card shadow="hover" style="margin-bottom: 20px">
-              <template #header><span>动量反转分析</span></template>
-              <el-form label-width="100px">
-                <el-form-item label="资产代码">
-                  <el-input v-model="momentumForm.code" placeholder="000001" />
-                </el-form-item>
-                <el-form-item label="回看天数">
-                  <el-input-number v-model="momentumForm.lookback" :min="5" :max="60" />
-                </el-form-item>
-                <el-form-item label="持有天数">
-                  <el-input-number v-model="momentumForm.hold" :min="1" :max="20" />
-                </el-form-item>
-                <el-form-item>
-                  <el-button type="primary" @click="calcMomentum" :loading="loading.momentum">分析</el-button>
-                </el-form-item>
-              </el-form>
-              <div v-if="momentumResult.ok" class="result-box">
-                <p>效应: <el-tag :type="momentumResult.effect === '动量效应' ? 'danger' : 'success'">{{ momentumResult.effect }}</el-tag></p>
-                <p>相关系数: {{ momentumResult.correlation?.toFixed(4) }}</p>
-              </div>
-            </el-card>
-
-            <el-card shadow="hover">
-              <template #header><span>均值回归分析</span></template>
-              <el-form label-width="80px">
-                <el-form-item label="资产代码">
-                  <el-input v-model="revertForm.code" placeholder="000001" />
-                </el-form-item>
-                <el-form-item>
-                  <el-button type="primary" @click="calcReversion" :loading="loading.revert">分析</el-button>
-                </el-form-item>
-              </el-form>
-              <div v-if="revertResult.ok" class="result-box">
-                <p>当前Z值: <strong>{{ revertResult.current_zscore?.toFixed(2) }}</strong></p>
-                <p>超买次数: {{ revertResult.overbought_count }} | 超卖次数: {{ revertResult.oversold_count }}</p>
-              </div>
-            </el-card>
-          </el-col>
-
-          <el-col :span="16">
-            <el-card shadow="hover" style="margin-bottom: 20px">
-              <template #header><span>月度季节效应</span></template>
-              <v-chart v-if="seasonResult.ok" :option="seasonChartOption" style="height: 300px" autoresize />
-              <el-empty v-else description="请先选择资产进行分析" />
-            </el-card>
-
-            <el-card shadow="hover">
-              <template #header><span>快速综合报告</span></template>
-              <el-form :inline="true">
-                <el-form-item label="资产代码">
-                  <el-input v-model="reportForm.code" placeholder="000001" />
-                </el-form-item>
-                <el-form-item>
-                  <el-button type="primary" @click="loadReport" :loading="loading.report">生成报告</el-button>
-                </el-form-item>
-              </el-form>
-              <div v-if="reportResult.ok">
-                <el-descriptions :column="3" border size="small">
-                  <el-descriptions-item label="数据范围">{{ reportResult.basic?.start_date?.slice(0,10) }} ~ {{ reportResult.basic?.end_date?.slice(0,10) }}</el-descriptions-item>
-                  <el-descriptions-item label="总收益">{{ reportResult.basic?.total_return_pct?.toFixed(2) }}%</el-descriptions-item>
-                  <el-descriptions-item label="年化收益">{{ reportResult.basic?.annualized_return_pct?.toFixed(2) }}%</el-descriptions-item>
-                  <el-descriptions-item label="年化波动">{{ reportResult.basic?.annualized_volatility_pct?.toFixed(2) }}%</el-descriptions-item>
-                  <el-descriptions-item label="最大回撤">{{ reportResult.basic?.max_drawdown_pct?.toFixed(2) }}%</el-descriptions-item>
-                  <el-descriptions-item label="夏普比率">{{ reportResult.basic?.sharpe_ratio?.toFixed(2) }}</el-descriptions-item>
-                </el-descriptions>
-              </div>
             </el-card>
           </el-col>
         </el-row>
@@ -380,7 +175,113 @@
         </el-row>
       </el-tab-pane>
 
-      <!-- Tab 5: 大宗商品 -->
+      <!-- Tab 5: 主题指数 -->
+      <el-tab-pane label="主题指数" name="theme">
+        <el-row :gutter="20">
+          <el-col :span="6">
+            <el-card shadow="hover">
+              <template #header>
+                <span>主题列表</span>
+              </template>
+              <el-input
+                v-model="themeSearch"
+                placeholder="搜索名称或代码"
+                clearable
+                size="small"
+                style="margin-bottom: 10px"
+              />
+              <el-table
+                :data="filteredThemeAssets"
+                size="small"
+                height="460"
+                highlight-current-row
+                @row-click="onThemeSelect"
+                style="cursor: pointer"
+              >
+                <el-table-column prop="code" label="代码" width="90" show-overflow-tooltip />
+                <el-table-column prop="name" label="名称" show-overflow-tooltip />
+              </el-table>
+              <div style="font-size: 12px; color: #909399; margin-top: 8px">
+                共 {{ filteredThemeAssets.length }} / {{ themeAssets.length }} 个
+              </div>
+            </el-card>
+          </el-col>
+          <el-col :span="18">
+            <el-card shadow="hover">
+              <template #header>
+                <div style="display: flex; justify-content: space-between; align-items: center">
+                  <div style="display: flex; align-items: center; gap: 8px">
+                    <span>{{ selectedTheme?.name || '选择主题查看走势' }}</span>
+                    <el-tag v-if="selectedTheme" size="small" type="warning">{{ selectedTheme.code }}</el-tag>
+                  </div>
+                  <el-radio-group v-model="themeChartMode" size="small">
+                    <el-radio-button label="收盘价" value="close" />
+                    <el-radio-button label="K线" value="kline" />
+                  </el-radio-group>
+                </div>
+              </template>
+              <div v-if="loading.themeChart" style="height: 500px; display: flex; align-items: center; justify-content: center">
+                <el-text type="info">加载中...</el-text>
+              </div>
+              <v-chart v-else-if="themeChartData.length" :option="themeChartOption" style="height: 500px" autoresize />
+              <el-empty v-else-if="selectedTheme" description="暂无数据，请在「数据缓存」中同步 L3 主题指数" />
+              <el-empty v-else description="点击左侧主题查看走势图" />
+            </el-card>
+          </el-col>
+        </el-row>
+        <el-row :gutter="20" style="margin-top: 16px">
+          <el-col :span="6">
+            <el-card shadow="hover">
+              <template #header>
+                <div style="display: flex; justify-content: space-between; align-items: center">
+                  <span>最新指标</span>
+                  <el-radio-group v-model="themePeView" size="small">
+                    <el-radio-button label="市盈率" value="pe" />
+                    <el-radio-button label="股息率" value="dy" />
+                  </el-radio-group>
+                </div>
+              </template>
+              <template v-if="themePeView === 'pe'">
+                <el-descriptions :column="1" border size="small">
+                  <el-descriptions-item label="静态PE">
+                    <span style="font-weight: bold; color: #409EFF">{{ themePeLatest?.pe1?.toFixed(2) ?? '-' }}</span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="TTM PE">
+                    <span style="font-weight: bold; color: #F56C6C">{{ themePeLatest?.pe2?.toFixed(2) ?? '-' }}</span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="数据日期">
+                    <span style="color: #909399; font-size: 12px">{{ themePeLatest?.date ?? '-' }}</span>
+                  </el-descriptions-item>
+                </el-descriptions>
+              </template>
+              <template v-else>
+                <el-descriptions :column="1" border size="small">
+                  <el-descriptions-item label="静态股息率">
+                    <span style="font-weight: bold; color: #67C23A">{{ themePeLatest?.dividend_yield1?.toFixed(2) ?? '-' }}%</span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="TTM股息率">
+                    <span style="font-weight: bold; color: #E6A23C">{{ themePeLatest?.dividend_yield2?.toFixed(2) ?? '-' }}%</span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="数据日期">
+                    <span style="color: #909399; font-size: 12px">{{ themePeLatest?.date ?? '-' }}</span>
+                  </el-descriptions-item>
+                </el-descriptions>
+              </template>
+            </el-card>
+          </el-col>
+          <el-col :span="18">
+            <el-card shadow="hover">
+              <template #header>
+                <span>{{ themePeView === 'pe' ? '市盈率走势' : '股息率走势' }}</span>
+              </template>
+              <v-chart v-if="themePeData.length" :option="themePeChartOption" style="height: 220px" autoresize />
+              <el-empty v-else description="暂无 PE 数据" :image-size="60" style="padding: 20px 0" />
+            </el-card>
+          </el-col>
+        </el-row>
+      </el-tab-pane>
+
+      <!-- Tab 6: 大宗商品 -->
       <el-tab-pane label="大宗商品" name="commodity">
         <el-row :gutter="20">
           <el-col :span="6">
@@ -420,6 +321,8 @@
           </el-col>
         </el-row>
       </el-tab-pane>
+
+
     </el-tabs>
   </div>
 </template>
@@ -431,19 +334,32 @@ import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import VChart from 'vue-echarts'
 import {
   analysisCacheStatus, analysisCacheSync, analysisCacheSyncBatch, analysisCacheProgress,
-  analysisCacheSyncL1, analysisCacheSyncL2, analysisCacheSyncL6, analysisCacheSyncL6C,
-  analysisPearson, analysisCorrMatrix, analysisCCF, analysisGranger,
-  analysisSeasonality, analysisMomentumReversal, analysisMeanReversion, analysisQuickReport,
-  analysisDataOHLCV, analysisDataDistribution, analysisVolumeAnalysis, analysisDataStats
+  analysisCacheSyncL1, analysisCacheSyncL2, analysisCacheSyncL6, analysisCacheSyncL6C, analysisCacheSyncL3Theme,
+
+  analysisDataOHLCV, analysisDataDistribution, analysisVolumeAnalysis, analysisDataStats,
+  getIndexPeData
 } from '../api'
 
 const activeTab = ref('cache')
 
+
+const PARAM_DESC = {
+  stop_loss_pct:        '兜底止损：浮亏达此%强制卖出，无论使用哪种退出模式都生效。宽基ETF建议10-20%；过小频繁止损，过大单次亏损过重。',
+  max_hold_days:        '时间止损：持仓超过此天数无论盈亏强制平仓，防止资金长期被套。0=不限制。常设365天（1年）或730天（2年）。',
+  take_profit_pct:      '止盈线：浮盈涨到此%时卖出锁利。过低会频繁止盈、错失后续上涨；建议参考标的历史平均涨幅周期设定。',
+  pmax_drawdown_pct:    '回撤容忍度：从持仓最高点回落超过此%触发卖出。宽基ETF日均波幅~1%，10%≈约10个交易日正常波动，可视个人风险偏好适度放宽。',
+  profit_trigger_pct:   '激活阈值：浮盈须先达到此%，保护机制才生效。激活前只有兜底止损保护，建议设在你认为"已有可观盈利"的水平（如ETF涨幅15-30%）。',
+  profit_retention_pct: '浮盈保留比（0～1）：激活后，止损线 = 历史最高浮盈 × 此比例。0.5=保留50%浮盈，0.8=保留80%（保护更激进，但容易提前触发）。',
+  cost_trigger_pct:     '激活阈值：浮盈须先达到此%后保本保护才生效。建议至少5-10%，给策略一定获利空间再锁仓位。',
+  cost_floor_pct:       '保护底线：激活后止损线 = 成本价×(1+此值/100)。0=保本，2=成本+2%，-1=允许亏1%才触发（负值通常不推荐）。',
+  reentry_cooldown:     '冷静期（日历天）：止损/止盈后等待此天数再重新入场，避免震荡市频繁进出被"锯齿"消耗。宽基ETF建议20-30天。',
+  whipsaw_window:       'Whipsaw判定窗口（交易日）：止损卖出后，若此日内价格反弹超过止损价则判为假止损。此参数只影响统计分析，不影响实际交易逻辑。',
+}
+
 // 加载状态
 const loading = ref({
-  cache: false, syncL1: false, syncL2: false, syncL6: false, syncL6C: false, syncSingle: false,
-  pearson: false, matrix: false, ccf: false, granger: false,
-  season: false, momentum: false, revert: false, report: false
+  cache: false, syncL1: false, syncL2: false, syncL6: false, syncL6C: false, syncL3Theme: false, syncSingle: false,
+  themeChart: false
 })
 
 // 缓存状态
@@ -457,92 +373,65 @@ let progressTimer = null
 // 同步表单
 const syncForm = ref({ code: '', asset_type: 'index' })
 
-// 全局日期范围（相关性分析页面共用）
-const globalDateRange = ref({
-  preset: '5y',
-  start: '',
-  end: ''
-})
-
-// 根据预设计算日期范围
-const calcDateRange = (preset) => {
-  const end = new Date()
-  const endStr = end.toISOString().split('T')[0]
-  let startStr = ''
-  switch (preset) {
-    case '1y':
-      startStr = new Date(end.getFullYear() - 1, end.getMonth(), end.getDate()).toISOString().split('T')[0]
-      break
-    case '3y':
-      startStr = new Date(end.getFullYear() - 3, end.getMonth(), end.getDate()).toISOString().split('T')[0]
-      break
-    case '5y':
-      startStr = new Date(end.getFullYear() - 5, end.getMonth(), end.getDate()).toISOString().split('T')[0]
-      break
-    case '10y':
-      startStr = new Date(end.getFullYear() - 10, end.getMonth(), end.getDate()).toISOString().split('T')[0]
-      break
-    case 'custom':
-      return { start: globalDateRange.value.start, end: globalDateRange.value.end }
-    default:
-      return { start: null, end: endStr }
-  }
-  return { start: startStr, end: endStr }
-}
-
-// 预设变化时自动更新日期
-const onDatePresetChange = (preset) => {
-  if (preset !== 'custom') {
-    const { start, end } = calcDateRange(preset)
-    globalDateRange.value.start = start
-    globalDateRange.value.end = end
-  }
-}
-
-// 初始化默认日期范围
-onMounted(() => {
-  const { start, end } = calcDateRange('5y')
-  globalDateRange.value.start = start
-  globalDateRange.value.end = end
-})
-
-// 获取当前日期范围参数
-const getGlobalDateParams = () => {
-  const { start, end } = calcDateRange(globalDateRange.value.preset)
-  return {
-    start_date: start,
-    end_date: end
-  }
-}
-
-const pearsonForm = ref({ code_a: '000001', code_b: '399001' })
-const pearsonResult = ref({})
-
-const matrixForm = ref({ codes: ['000001', '399001', '000300', '399006'] })
-const matrixResult = ref({})
-
-const ccfForm = ref({ code_a: '000300', code_b: '399006', max_lag: 10 })
-const ccfResult = ref({})
-
-// 规律挖掘表单
-const seasonForm = ref({ code: '000001' })
-const seasonResult = ref({})
-
-const momentumForm = ref({ code: '000001', lookback: 20, hold: 5 })
-
 // 数据查看
 const dataViewForm = ref({ code: '', assetType: 'all' })
 const dataStats = ref({ exists: false })
 const klineData = ref([])
 const distData = ref({ bins: [], freq: [] })
 const volumeData = ref([])
-const momentumResult = ref({})
+// 主题指数
+const themeAssets = ref([])
+const themeSearch = ref('')
+const selectedTheme = ref(null)
+const themeChartData = ref([])
+const themeChartMode = ref('close')
+const themePeData = ref([])
+const themePeView = ref('pe')
 
-const revertForm = ref({ code: '000001' })
-const revertResult = ref({})
+const filteredThemeAssets = computed(() => {
+  const q = themeSearch.value.trim()
+  if (!q) return themeAssets.value
+  return themeAssets.value.filter(a => a.name.includes(q) || a.code.includes(q))
+})
 
-const reportForm = ref({ code: '000001' })
-const reportResult = ref({})
+const loadThemeAssets = () => {
+  themeAssets.value = cacheAssets.value.filter(a => a.category === '主题指数')
+  if (themeAssets.value.length > 0 && !selectedTheme.value) {
+    const first = themeAssets.value[0]
+    selectedTheme.value = first
+    loadThemeChart(first.code)
+  }
+}
+
+const onThemeSelect = (row) => {
+  selectedTheme.value = row
+  loadThemeChart(row.code)
+  loadThemePe(row.code)
+}
+
+const loadThemePe = async (code) => {
+  themePeData.value = []
+  try {
+    const res = await getIndexPeData(code)
+    themePeData.value = res.data.data || []
+  } catch (e) {
+    // PE数据缺失不影响主流程
+  }
+}
+
+const loadThemeChart = async (code) => {
+  if (!code) return
+  loading.value.themeChart = true
+  themeChartData.value = []
+  try {
+    const res = await analysisDataOHLCV(code, 5000)
+    themeChartData.value = res.data.data || []
+  } catch (e) {
+    ElMessage.error('加载数据失败')
+  } finally {
+    loading.value.themeChart = false
+  }
+}
 
 // 大宗商品
 const commodityAssets = ref([])
@@ -621,67 +510,6 @@ const onAssetTypeChange = () => {
   klineData.value = []
 }
 
-// 相关矩阵表格数据
-const matrixTableData = computed(() => {
-  if (!matrixResult.value.ok) return []
-  const codes = matrixResult.value.codes || []
-  const matrix = matrixResult.value.matrix || []
-  return codes.map((code, i) => {
-    const row = { code }
-    codes.forEach((c, j) => { row[c] = matrix[i]?.[j] })
-    return row
-  })
-})
-
-// CCF图表配置
-const ccfChartOption = computed(() => {
-  if (!ccfResult.value.ok) return {}
-  return {
-    tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: ccfResult.value.lags, name: '滞后' },
-    yAxis: { type: 'value', name: '相关系数' },
-    series: [{
-      type: 'bar',
-      data: ccfResult.value.values,
-      itemStyle: {
-        color: (p) => p.value > 0 ? '#f56c6c' : '#67c23a'
-      }
-    }],
-    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true }
-  }
-})
-
-// 季节效应图表
-const seasonChartOption = computed(() => {
-  if (!seasonResult.value.ok) return {}
-  const months = seasonResult.value.monthly || []
-  return {
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['月均涨跌%', '胜率%'] },
-    xAxis: { type: 'category', data: months.map(m => m.month + '月') },
-    yAxis: [
-      { type: 'value', name: '涨跌%', position: 'left' },
-      { type: 'value', name: '胜率%', position: 'right', max: 100 }
-    ],
-    series: [
-      {
-        name: '月均涨跌%',
-        type: 'bar',
-        data: months.map(m => (m.avg_pct * 100).toFixed(2)),
-        itemStyle: { color: (p) => parseFloat(p.value) > 0 ? '#f56c6c' : '#67c23a' }
-      },
-      {
-        name: '胜率%',
-        type: 'line',
-        yAxisIndex: 1,
-        data: months.map(m => (m.win_rate * 100).toFixed(1)),
-        smooth: true
-      }
-    ],
-    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true }
-  }
-})
-
 // 辅助函数
 const assetTypeTag = (type) => {
   const map = { index: 'primary', sector_industry: 'success', sector_concept: 'warning', etf: 'info', stock: '', commodity: 'danger' }
@@ -737,8 +565,8 @@ const stopProgressPolling = () => {
   }
 }
 
-// 等待进度完成后再停止轮询
-const waitProgressComplete = async (timeoutMs = 30000) => {
+// 等待进度完成后再停止轮询（最长等 10 分钟，L3/L6 同步较慢）
+const waitProgressComplete = async (timeoutMs = 600000) => {
   const startTime = Date.now()
   while (Date.now() - startTime < timeoutMs) {
     try {
@@ -854,6 +682,29 @@ const syncL6C = async () => {
   }
 }
 
+const syncL3Theme = async () => {
+  loading.value.syncL3Theme = true
+  startProgressPolling()
+  try {
+    const res = await analysisCacheSyncL3Theme()
+    if (res.data.ok === false) {
+      ElMessage.error(res.data.message || 'L3主题指数同步失败')
+      await new Promise(r => setTimeout(r, 2000))
+      return
+    }
+    ElMessage.success(`L3主题指数同步完成: ${res.data.success}/${res.data.total} 个指数, ${res.data.saved}条数据`)
+    loadCacheStatus()
+  } catch (e) {
+    ElMessage.error('L3主题指数同步失败: ' + (e.response?.data?.detail || e.message))
+    await new Promise(r => setTimeout(r, 2000))
+  } finally {
+    await waitProgressComplete()
+    stopProgressPolling()
+    loading.value.syncL3Theme = false
+    syncProgress.value = { active: false, task: '', current: 0, total: 0, current_code: '', message: '空闲' }
+  }
+}
+
 const syncSingle = async () => {
   if (!syncForm.value.code) return ElMessage.warning('请输入资产代码')
   loading.value.syncSingle = true
@@ -865,99 +716,6 @@ const syncSingle = async () => {
     ElMessage.error('同步失败: ' + (e.response?.data?.detail || e.message))
   } finally {
     loading.value.syncSingle = false
-  }
-}
-
-const calcPearson = async () => {
-  loading.value.pearson = true
-  pearsonResult.value = {}  // 清空旧结果
-  try {
-    const { start_date, end_date } = getGlobalDateParams()
-    const params = {
-      code_a: pearsonForm.value.code_a,
-      code_b: pearsonForm.value.code_b,
-      start_date,
-      end_date
-    }
-    pearsonResult.value = (await analysisPearson(params)).data
-  } catch (e) {
-    ElMessage.error('计算失败')
-  } finally {
-    loading.value.pearson = false
-  }
-}
-
-const calcMatrix = async () => {
-  if (matrixForm.value.codes.length < 2) return ElMessage.warning('至少选择2个资产')
-  loading.value.matrix = true
-  matrixResult.value = {}  // 清空旧结果
-  try {
-    const { start_date, end_date } = getGlobalDateParams()
-    const params = {
-      codes: matrixForm.value.codes,
-      start_date,
-      end_date
-    }
-    matrixResult.value = (await analysisCorrMatrix(params)).data
-  } catch (e) {
-    ElMessage.error('计算失败')
-  } finally {
-    loading.value.matrix = false
-  }
-}
-
-const calcCCF = async () => {
-  loading.value.ccf = true
-  try {
-    ccfResult.value = (await analysisCCF(ccfForm.value)).data
-  } catch (e) {
-    ElMessage.error('计算失败')
-  } finally {
-    loading.value.ccf = false
-  }
-}
-
-const calcSeasonality = async () => {
-  loading.value.season = true
-  try {
-    seasonResult.value = (await analysisSeasonality(seasonForm.value)).data
-  } catch (e) {
-    ElMessage.error('分析失败')
-  } finally {
-    loading.value.season = false
-  }
-}
-
-const calcMomentum = async () => {
-  loading.value.momentum = true
-  try {
-    momentumResult.value = (await analysisMomentumReversal(momentumForm.value)).data
-  } catch (e) {
-    ElMessage.error('分析失败')
-  } finally {
-    loading.value.momentum = false
-  }
-}
-
-const calcReversion = async () => {
-  loading.value.revert = true
-  try {
-    revertResult.value = (await analysisMeanReversion(revertForm.value)).data
-  } catch (e) {
-    ElMessage.error('分析失败')
-  } finally {
-    loading.value.revert = false
-  }
-}
-
-const loadReport = async () => {
-  loading.value.report = true
-  try {
-    reportResult.value = (await analysisQuickReport(reportForm.value)).data
-  } catch (e) {
-    ElMessage.error('生成报告失败')
-  } finally {
-    loading.value.report = false
   }
 }
 
@@ -1130,6 +888,121 @@ const commodityChartOption = computed(() => {
   }
 })
 
+// 主题指数走势图配置
+const themeChartOption = computed(() => {
+  if (!themeChartData.value.length) return {}
+  const dates = themeChartData.value.map(d => d.date)
+  const range = calculateSixMonthRange(dates)
+  const isClose = themeChartMode.value === 'close'
+  const dataZoom = [
+    { type: 'inside', start: range.start, end: range.end },
+    {
+      type: 'slider',
+      start: range.start,
+      end: range.end,
+      bottom: '2%',
+      height: 24,
+      handleStyle: { color: '#409EFF', borderColor: '#409EFF', borderWidth: 2, shadowBlur: 4, shadowColor: 'rgba(64, 158, 255, 0.5)' },
+      textStyle: { color: '#303133', fontWeight: 'bold', fontSize: 12 },
+      borderColor: '#DCDFE6',
+      fillerColor: 'rgba(64, 158, 255, 0.15)',
+      backgroundColor: '#F5F7FA',
+      dataBackground: { lineStyle: { color: '#C0C4CC', width: 1 }, areaStyle: { color: '#EBEEF5' } },
+      selectedDataBackground: { lineStyle: { color: '#409EFF', width: 2 }, areaStyle: { color: 'rgba(64, 158, 255, 0.2)' } },
+      brushSelect: false
+    }
+  ]
+  return {
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    grid: { left: '10%', right: '10%', top: '10%', bottom: '15%' },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      scale: true,
+      boundaryGap: isClose ? false : true,
+      axisLine: { onZero: false, lineStyle: { color: '#909399' } },
+      axisTick: { show: true, alignWithLabel: true },
+      splitLine: { show: false },
+      axisLabel: { show: true, interval: 'auto', rotate: 0, fontSize: 11, color: '#606266' }
+    },
+    yAxis: { scale: true, splitArea: { show: true }, name: '指数' },
+    dataZoom,
+    series: isClose
+      ? [{
+          name: '收盘价',
+          type: 'line',
+          data: themeChartData.value.map(d => d.close),
+          smooth: false,
+          symbol: 'none',
+          lineStyle: { color: '#409EFF', width: 2 },
+          areaStyle: { color: 'rgba(64, 158, 255, 0.08)' }
+        }]
+      : [{
+          name: 'K线',
+          type: 'candlestick',
+          data: themeChartData.value.map(d => [d.open, d.close, d.low, d.high]),
+          itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' }
+        }]
+  }
+})
+
+// 主题指数 PE 最新值
+const themePeLatest = computed(() => {
+  if (!themePeData.value.length) return null
+  return themePeData.value[themePeData.value.length - 1]
+})
+
+// 主题指数 PE / 股息率图表配置
+const themePeChartOption = computed(() => {
+  if (!themePeData.value.length) return {}
+  const sorted = [...themePeData.value].sort((a, b) => new Date(a.date) - new Date(b.date))
+  const dates = sorted.map(p => p.date)
+  const isPe = themePeView.value === 'pe'
+
+  const v1 = sorted.map(p => isPe ? p.pe1 : p.dividend_yield1)
+  const v2 = sorted.map(p => isPe ? p.pe2 : p.dividend_yield2)
+  const s1Name = isPe ? '静态PE' : '静态股息率'
+  const s2Name = isPe ? 'TTM PE' : 'TTM股息率'
+  const yName  = isPe ? 'PE' : '股息率(%)'
+  const fmt    = isPe ? (v => v?.toFixed(2)) : (v => v?.toFixed(2) + '%')
+
+  const all = [...v1, ...v2].filter(v => v != null)
+  const vMin = Math.min(...all), vMax = Math.max(...all)
+  const vRange = vMax - vMin || 1
+
+  return {
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        let html = `<div style="font-weight:bold;margin-bottom:4px">${params[0].axisValue}</div>`
+        params.forEach(p => {
+          const val = p.value != null ? (isPe ? p.value.toFixed(2) : p.value.toFixed(2) + '%') : '-'
+          html += `<div>${p.marker} ${p.seriesName}: <b>${val}</b></div>`
+        })
+        return html
+      }
+    },
+    legend: { data: [s1Name, s2Name], top: 4 },
+    grid: { left: '8%', right: '4%', top: '14%', bottom: '8%' },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLabel: { fontSize: 11, color: '#606266' }
+    },
+    yAxis: {
+      type: 'value',
+      name: yName,
+      min: Math.max(0, vMin - vRange * 0.1),
+      max: vMax + vRange * 0.1,
+      axisLabel: { formatter: fmt }
+    },
+    series: [
+      { name: s1Name, type: 'line', data: v1, smooth: true, symbol: 'circle', symbolSize: 4, lineStyle: { color: '#409EFF', width: 2 }, itemStyle: { color: '#409EFF' } },
+      { name: s2Name, type: 'line', data: v2, smooth: true, symbol: 'circle', symbolSize: 4, lineStyle: { color: '#F56C6C', width: 2 }, itemStyle: { color: '#F56C6C' } }
+    ]
+  }
+})
+
 // 分布图配置
 const distOption = computed(() => {
   if (!distData.value.freq?.length) return {}
@@ -1180,27 +1053,21 @@ const volumeOption = computed(() => {
   }
 })
 
+
 onMounted(() => {
   loadCacheStatus()
 })
 
-// 切换到数据查看Tab时自动加载缓存状态
 watch(activeTab, (tab) => {
-  if (tab === 'dataview') {
-    loadCacheStatus()
-  }
-  if (tab === 'commodity') {
-    loadCommodityAssets()
-  }
+  if (tab === 'dataview') loadCacheStatus()
+  if (tab === 'theme') loadThemeAssets()
+  if (tab === 'commodity') loadCommodityAssets()
 })
 
 const handleTabClick = () => {
-  if (activeTab.value === 'dataview') {
-    loadCacheStatus()
-  }
-  if (activeTab.value === 'commodity') {
-    loadCommodityAssets()
-  }
+  if (activeTab.value === 'dataview') loadCacheStatus()
+  if (activeTab.value === 'theme') loadThemeAssets()
+  if (activeTab.value === 'commodity') loadCommodityAssets()
 }
 </script>
 
@@ -1211,4 +1078,12 @@ const handleTabClick = () => {
 .result-box { background: #f5f7fa; padding: 15px; border-radius: 4px; margin-top: 10px; }
 .profit { color: #f56c6c; }
 .loss { color: #67c23a; }
+.col-tip    { cursor: help; border-bottom: 1px dashed #909399; }
+.best-metric { cursor: help; border-bottom: 1px dashed #67c23a; }
+.mode-desc-box { background:#f0f9eb; border-left:3px solid #67c23a; border-radius:4px; padding:8px 10px; font-size:12px; color:#606266; line-height:1.7; margin-bottom:12px; white-space:pre-line; }
+.param-desc    { font-size:11px; color:#909399; line-height:1.6; margin-top:3px; }
+:deep(.grid-best-row)  { background: #f0f9eb !important; font-weight: bold; }
+:deep(.oos-row-good)   { background: #f0f9eb !important; }
+:deep(.oos-row-warn)   { background: #fdf6ec !important; }
+:deep(.oos-row-bad)    { background: #fef0f0 !important; }
 </style>

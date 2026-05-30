@@ -135,6 +135,13 @@ def sync_l3_concept():
     return _sync()
 
 
+@router.post("/cache/sync-l3-theme")
+def sync_l3_theme_indexes():
+    """同步 L3 主题指数（持仓关联的中证/恒生系列指数）"""
+    from services.analysis.data_fetcher import sync_l3_theme_indexes as _sync
+    return _sync()
+
+
 @router.post("/cache/sync-l6")
 def sync_l6_commodity():
     """同步 L6 国际大宗商品（黄金/原油/白银等）"""
@@ -453,3 +460,40 @@ def report_pair(req: CorrelationRequest):
     return pair_report(
         req.code_a, req.code_b, _parse_date(req.start_date), _parse_date(req.end_date)
     )
+
+
+class GridSearchRequest(BaseModel):
+    code: str
+    exit_mode: str = "pmax_drawdown"
+    # grid: {param_name: {"min":x, "max":y, "step":z}}
+    grid: dict
+    objective: str = "calmar"   # calmar / total_return / capture / dd_reduction
+    entry_freq: int = 5
+    whipsaw_window: int = 20
+    max_combos: int = 2000
+    top_n: int = 30
+    train_end: Optional[str] = None   # "YYYY-MM-DD"，不填则全历史
+    oos_top_n: int = 5                # 样本外验证取 Top N
+
+
+@router.post("/backtest/grid-search")
+def grid_search(req: GridSearchRequest, db: Session = Depends(get_db)):
+    """
+    参数网格搜索：对单一退出模式扫描参数笛卡尔积，按目标排序输出 top 组合 + 热力图。
+    objective 默认 calmar（总收益/最大回撤，风险调整）。
+    """
+    from services.analysis.backtest import run_grid_search
+    return run_grid_search(
+        db=db,
+        code=req.code,
+        exit_mode=req.exit_mode,
+        grid=req.grid,
+        objective=req.objective,
+        entry_freq=req.entry_freq,
+        whipsaw_window=req.whipsaw_window,
+        max_combos=req.max_combos,
+        top_n=req.top_n,
+        train_end=req.train_end,
+        oos_top_n=req.oos_top_n,
+    )
+

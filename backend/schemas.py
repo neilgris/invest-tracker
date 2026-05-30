@@ -70,7 +70,6 @@ class PositionOut(BaseModel):
 class PositionDetailOut(BaseModel):
     code: str
     name: str
-    short_name: Optional[str]
     category: Optional[str]
     linked_code: Optional[str]
     linked_name: Optional[str]
@@ -212,22 +211,6 @@ class ProfitLevelConfigUpdate(BaseModel):
     display_color: str
     hold_days_min: Optional[int] = None
     hold_days_max: Optional[int] = None
-
-
-# Baseline Config schemas
-class BaselineConfigCreate(BaseModel):
-    code: str
-    baseline_code: str
-
-
-class BaselineConfigOut(BaseModel):
-    id: int
-    code: str
-    baseline_code: str
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 # Trade marker for position detail chart

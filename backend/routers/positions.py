@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from database import get_db
-from models import Position, DailySnapshot, Trade, BaselineConfig
-from schemas import PositionOut, OverviewOut, BaselineConfigCreate, BaselineConfigOut, TradeMarker, PositionCategoryUpdate, PositionLinkedCodeUpdate
+from models import Position, DailySnapshot, Trade, HistQuotesCache
+from schemas import PositionOut, OverviewOut, TradeMarker, PositionCategoryUpdate, PositionLinkedCodeUpdate
 from services.stats import get_overview
 from services.market import get_hist_prices
 from datetime import date, timedelta, datetime
@@ -71,6 +71,7 @@ def enrich_position(pos: Position, db: Session, latest_snaps: dict = None, lates
         "is_closed": pos.is_closed,
         "updated_at": pos.updated_at,
         "linked_info": linked_info,
+        "benchmark_index": pos.benchmark_index,
     }
 
 
@@ -309,22 +310,22 @@ def get_position_chart(
             "quantity": t.quantity,
         })
     
-    # 获取基线数据
+    # 获取基线数据（从 hist_quotes_cache 读取，不走 daily_snapshots）
     baseline_data = None
     if baseline:
-        baseline_snaps = db.query(DailySnapshot).filter(
-            DailySnapshot.code == baseline
-        ).order_by(DailySnapshot.date).all()
-        if baseline_snaps:
+        baseline_quotes = db.query(HistQuotesCache).filter(
+            HistQuotesCache.code == baseline
+        ).order_by(HistQuotesCache.date).all()
+        if baseline_quotes:
             if period == "weekly":
-                baseline_data = _aggregate_weekly(baseline_snaps)
+                baseline_data = _aggregate_weekly(baseline_quotes)
             elif period == "monthly":
-                baseline_data = _aggregate_monthly(baseline_snaps)
+                baseline_data = _aggregate_monthly(baseline_quotes)
             else:
                 baseline_data = [{
-                    "date": s.date.strftime("%Y-%m-%d"),
-                    "close": s.close,
-                } for s in baseline_snaps]
+                    "date": q.date.strftime("%Y-%m-%d"),
+                    "close": q.close,
+                } for q in baseline_quotes]
     
     return {
         "data": price_data,

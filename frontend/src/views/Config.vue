@@ -149,7 +149,7 @@
         </el-table-column>
       </el-table>
     </el-card>
-    
+
     <!-- 编辑利润等级对话框 -->
     <el-dialog v-model="profitDialogVisible" title="编辑利润等级配置" width="500px">
       <el-form :model="profitEditForm" label-width="140px" v-if="profitEditForm">

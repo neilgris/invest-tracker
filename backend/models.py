@@ -29,6 +29,7 @@ class Position(Base):
     linked_code = Column(String(10), nullable=True)  # 关联场内ETF代码
     linked_name = Column(String(50), nullable=True)  # 关联ETF名称
     linked_short_name = Column(String(30), nullable=True)  # 关联ETF短名称
+    benchmark_index = Column(String(10), nullable=True)  # 关联指数代码（用于PE查询）
     total_cost = Column(Float, default=0.0)
     quantity = Column(Float, default=0.0)
     avg_cost = Column(Float, default=0.0)
@@ -55,25 +56,15 @@ class DailySnapshot(Base):
     total_pnl = Column(Float, nullable=True)
 
 
-class BaselineConfig(Base):
-    __tablename__ = "baseline_config"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    etf_code = Column(String(10), nullable=False, index=True)
-    baseline_code = Column(String(10), nullable=False)
-    baseline_name = Column(String(50), nullable=False)
-
-
 class AssetMeta(Base):
-    """资产元数据表：所有标的的档案信息"""
+    """资产元数据表：存储指数/行业等基础信息"""
     __tablename__ = "asset_meta"
 
     code = Column(String(10), primary_key=True)
     name = Column(String(50), nullable=False)
     asset_type = Column(String(20), nullable=False)  # index / sector_industry / sector_concept / etf / stock / fund
-    category = Column(String(30), nullable=True)       # 细分分类（ETF: 宽基/行业/主题/跨境/商品/债券; 行业: 金融/科技/消费...）
+    category = Column(String(30), nullable=True)       # 细分分类
     source = Column(String(20), nullable=True)       # 数据来源（sw=申万, csi=中证, wind=Wind等）
-    benchmark_index = Column(String(10), nullable=True)  # 关联基准指数
     list_date = Column(Date, nullable=True)
     is_cached = Column(Integer, default=0)  # 是否已缓存历史数据
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -96,16 +87,6 @@ class HistQuotesCache(Base):
     volume = Column(Float, nullable=True)      # 成交量
     turnover = Column(Float, nullable=True)    # 成交额
     pct_change = Column(Float, nullable=True)  # 涨跌幅%
-
-
-class AssetSectorMapping(Base):
-    """个股-板块映射表"""
-    __tablename__ = "asset_sector_mapping"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    stock_code = Column(String(10), nullable=False, index=True)
-    sector_code = Column(String(10), nullable=False, index=True)
-    sector_type = Column(String(20), nullable=False)  # industry / concept
 
 
 class SyncLog(Base):
@@ -149,3 +130,21 @@ class ProfitLevelConfig(Base):
     hold_days_min = Column(Integer, nullable=True)  # 持仓天数最小值(≥), None表示无限制
     hold_days_max = Column(Integer, nullable=True)  # 持仓天数最大值(<), None表示无限制
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class IndexPEHistory(Base):
+    """指数PE历史数据表：存储指数估值历史，用于PE走势分析"""
+    __tablename__ = "index_pe_history"
+    __table_args__ = (
+        Index('ix_index_pe_code_date', 'code', 'date', unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    code = Column(String(10), nullable=False, index=True)  # 指数代码
+    date = Column(Date, nullable=False)  # 日期
+    pe1 = Column(Float, nullable=True)   # 市盈率1（中证指数提供）
+    pe2 = Column(Float, nullable=True)   # 市盈率2（中证指数提供，通常为滚动PE）
+    dividend_yield1 = Column(Float, nullable=True)  # 股息率1
+    dividend_yield2 = Column(Float, nullable=True)  # 股息率2
+    source = Column(String(20), default='csindex')  # 数据来源：csindex=中证指数
+    created_at = Column(DateTime, default=datetime.now)

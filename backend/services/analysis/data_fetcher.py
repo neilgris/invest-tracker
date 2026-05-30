@@ -19,7 +19,7 @@ from sqlalchemy import func
 from typing import Literal
 
 from database import SessionLocal
-from models import AssetMeta, HistQuotesCache, AssetSectorMapping
+from models import AssetMeta, HistQuotesCache
 
 # ── 限速 ──────────────────────────────────────────────
 _MIN_INTERVAL = 5.0  # 秒，同一标的连续调用间隔（避免限流）
@@ -61,27 +61,84 @@ def _clear_progress():
 # 基础行情拉取（akshare 封装）
 # ══════════════════════════════════════════════════════
 
-def _ak_index_daily(symbol: str, start: str, end: str) -> pd.DataFrame | None:
-    """拉取指数日线（000/399开头走 stock_zh_index_daily，全量拉取后截取）"""
+def _csindex_to_df(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """将中证指数接口返回的数据转换为标准格式"""
+    df = df_raw.copy()
+    df["date"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
+    df = df.rename(columns={
+        "开盘": "open",
+        "收盘": "close",
+        "最高": "high",
+        "最低": "low",
+        "成交量": "volume",
+        "成交金额": "turnover",
+        "涨跌幅": "pct_change"
+    })
+    df = df[["date", "open", "close", "high", "low", "volume", "turnover", "pct_change"]]
+    # 过滤 csindex 返回的基期占位记录（年份早于 2000，不是真实交易日）
+    df = df[df["date"] >= "2000-01-01"].reset_index(drop=True)
+    # 中证指数接口只提供收盘价，用收盘价填充缺失的开高低数据
+    df["open"] = df["open"].fillna(df["close"])
+    df["high"] = df["high"].fillna(df["close"])
+    df["low"] = df["low"].fillna(df["close"])
+    return df
+
+
+def _ak_index_daily(symbol: str, start: str | None, end: str | None) -> pd.DataFrame | None:
+    """
+    拉取指数日线
+    - 000/399 开头：先尝试 stock_zh_index_daily，失败则回退到 stock_zh_index_hist_csindex
+    - 其他（931xxx, 932xxx, Hxxxxx 等中证/恒生指数）：走 stock_zh_index_hist_csindex
+    """
     try:
-        # stock_zh_index_daily 只接受 symbol，无日期参数，拉全量后截取
-        # 399 开头走 sz，其余走 sh
-        ak_symbol = f"sz{symbol}" if symbol.startswith("399") else f"sh{symbol}"
-        df = ak.stock_zh_index_daily(symbol=ak_symbol)
-        if df is None or df.empty:
-            return None
-        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
-        # start/end 传入的是 %Y%m%d 格式，转换为 %Y-%m-%d 以便比较
-        start_fmt = f"{start[:4]}-{start[4:6]}-{start[6:8]}"
-        end_fmt = f"{end[:4]}-{end[4:6]}-{end[6:8]}"
+        # 判断指数类型
+        is_csindex = not (symbol.startswith("000") or symbol.startswith("399"))
+        
+        # 规范化日期参数（YYYYMMDD 格式，用于 csindex 接口）
+        cs_start = start if start else "19900101"
+        cs_end   = end   if end   else date.today().strftime("%Y%m%d")
+
+        if is_csindex:
+            # 中证/恒生系列指数，使用 csindex 接口（必须传 end_date，否则默认只到 2024-06-04）
+            df = ak.stock_zh_index_hist_csindex(symbol=symbol, start_date=cs_start, end_date=cs_end)
+            if df is None or df.empty:
+                return None
+            df = _csindex_to_df(df)
+        else:
+            # 上交所/深交所传统指数，先尝试 stock_zh_index_daily
+            ak_symbol = f"sz{symbol}" if symbol.startswith("399") else f"sh{symbol}"
+            try:
+                df = ak.stock_zh_index_daily(symbol=ak_symbol)
+                if df is None or df.empty:
+                    raise ValueError("Empty data")
+
+                df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+                # 计算 pct_change（akshare 指数接口不返回涨跌幅）
+                df["pct_change"] = df["close"].pct_change() * 100
+                # turnover 不存在，设为 NaN
+                if "turnover" not in df.columns:
+                    df["turnover"] = None
+            except Exception:
+                # 失败则回退到 csindex 接口（如 000859 等部分 000 开头指数）
+                df = ak.stock_zh_index_hist_csindex(symbol=symbol, start_date=cs_start, end_date=cs_end)
+                if df is None or df.empty:
+                    return None
+                df = _csindex_to_df(df)
+        
+        # 日期筛选
+        if start:
+            start_fmt = f"{start[:4]}-{start[4:6]}-{start[6:8]}"
+        else:
+            start_fmt = "1990-01-01"
+        if end:
+            end_fmt = f"{end[:4]}-{end[4:6]}-{end[6:8]}"
+        else:
+            end_fmt = date.today().strftime("%Y-%m-%d")
+        
         df = df[(df["date"] >= start_fmt) & (df["date"] <= end_fmt)]
         if df.empty:
             return None
-        # 计算 pct_change（akshare 指数接口不返回涨跌幅）
-        df["pct_change"] = df["close"].pct_change() * 100
-        # turnover 不存在，设为 NaN
-        if "turnover" not in df.columns:
-            df["turnover"] = None
+            
         return df
     except Exception as e:
         print(f"[index] {symbol} 拉取失败: {e}")
@@ -310,38 +367,47 @@ def _fetch_and_cache(
     自动判断增量：只拉 DB 中不存在的日期区间。
     返回新增记录数，0 表示无新增（或拉取失败）。
     """
-    # 处理 None 情况（拉全部历史）
+    # 统一上界为 T-1（昨日），手动同步不拉当日未收盘数据
+    yesterday = date.today() - timedelta(days=1)
     if start_date is None:
-        start_date = date(1990, 1, 1)  # 足够早的日期
-    if end_date is None:
-        end_date = date.today()
+        start_date = date(1990, 1, 1)
+    if end_date is None or end_date > yesterday:
+        end_date = yesterday
 
     s_start = start_date.strftime("%Y%m%d")
     s_end   = end_date.strftime("%Y%m%d")
 
-    # ── 判断已有数据范围 ──────────────────────────────
+    # ── 增量：若 DB 已有数据，只拉缺失部分（含左侧回填）──
     existing = db.query(func.min(HistQuotesCache.date), func.max(HistQuotesCache.date)).filter(
         HistQuotesCache.code == code
     ).one_or_none()
 
     if existing and existing[0] and existing[1]:
         db_min, db_max = existing[0], existing[1]
-        # 确定实际需要拉的区间（与请求区间取并集）
-        target_start = min(start_date, db_min)
-        target_end   = max(end_date, db_max)
-        
-        # 新逻辑：只要 DB 最新数据不是 T-1（昨日），就从 db_max+1 拉取到 T-1
-        yesterday = date.today() - timedelta(days=1)
-        if db_max >= yesterday:
-            # DB 已是最新（到昨日），无需拉取
-            return 0
-        
-        # 从 DB 最后日期+1 开始拉取，到昨日为止
-        s_start = (db_max + timedelta(days=1)).strftime("%Y%m%d")
-        s_end = yesterday.strftime("%Y%m%d")
-        if s_start > s_end:
-            return 0
+        saved = 0
 
+        # 左侧回填：请求起点早于 DB 最早日期
+        if start_date < db_min:
+            bf_start = start_date.strftime("%Y%m%d")
+            bf_end   = (db_min - timedelta(days=1)).strftime("%Y%m%d")
+            if bf_start <= bf_end:
+                saved += _fetch_range(db, code, asset_type, bf_start, bf_end)
+
+        # 右侧增量：从 DB 最新日期+1 到 T-1
+        if db_max >= yesterday:
+            return saved  # 右侧已是最新
+        fw_start = (db_max + timedelta(days=1)).strftime("%Y%m%d")
+        fw_end   = yesterday.strftime("%Y%m%d")
+        if fw_start <= fw_end:
+            saved += _fetch_range(db, code, asset_type, fw_start, fw_end)
+        return saved
+
+    # 首次拉取（DB 无数据）
+    return _fetch_range(db, code, asset_type, s_start, s_end)
+
+
+def _fetch_range(db, code: str, asset_type: str, s_start: str, s_end: str) -> int:
+    """按资产类型拉取指定日期区间数据并 upsert 写入 DB，返回新增条数。"""
     # ── 按资产类型拉取 ────────────────────────────────
     if asset_type == "index":
         df = _ak_index_daily(code, s_start, s_end)
@@ -350,7 +416,6 @@ def _fetch_and_cache(
     elif asset_type == "fund":
         df = _ak_fund_nav_hist(code, s_start, s_end)
     elif asset_type == "commodity":
-        # 区分国际大宗商品(L6)和国内期货(L6C)
         if code in L6C_DOMESTIC_COMMODITY_CODES:
             df = _ak_domestic_commodity_hist(code, s_start, s_end)
         else:
@@ -374,32 +439,34 @@ def _fetch_and_cache(
         ).first()
 
         if existing_row:
-            existing_row.open        = float(row["open"])  if pd.notna(row.get("open"))        else None
-            existing_row.close       = float(row["close"])
-            existing_row.high        = float(row["high"])  if pd.notna(row.get("high"))        else None
-            existing_row.low         = float(row["low"])   if pd.notna(row.get("low"))         else None
-            existing_row.volume      = float(row["volume"])if pd.notna(row.get("volume"))      else None
-            existing_row.turnover    = float(row["turnover"])if pd.notna(row.get("turnover")) else None
-            existing_row.pct_change  = float(row["pct_change"])if pd.notna(row.get("pct_change")) else None
+            existing_row.open       = float(row["open"])       if pd.notna(row.get("open"))       else None
+            existing_row.close      = float(row["close"])
+            existing_row.high       = float(row["high"])       if pd.notna(row.get("high"))       else None
+            existing_row.low        = float(row["low"])        if pd.notna(row.get("low"))        else None
+            existing_row.volume     = float(row["volume"])     if pd.notna(row.get("volume"))     else None
+            existing_row.turnover   = float(row["turnover"])   if pd.notna(row.get("turnover"))   else None
+            existing_row.pct_change = float(row["pct_change"]) if pd.notna(row.get("pct_change")) else None
         else:
             db.add(HistQuotesCache(
-                code=code,
-                date=d,
-                open       = float(row["open"])        if pd.notna(row.get("open"))        else None,
+                code=code, date=d,
+                open       = float(row["open"])       if pd.notna(row.get("open"))       else None,
                 close      = float(row["close"]),
-                high       = float(row["high"])        if pd.notna(row.get("high"))        else None,
-                low        = float(row["low"])         if pd.notna(row.get("low"))          else None,
-                volume     = float(row["volume"])       if pd.notna(row.get("volume"))       else None,
-                turnover   = float(row["turnover"])   if pd.notna(row.get("turnover"))     else None,
-                pct_change = float(row["pct_change"])  if pd.notna(row.get("pct_change"))   else None,
+                high       = float(row["high"])       if pd.notna(row.get("high"))       else None,
+                low        = float(row["low"])        if pd.notna(row.get("low"))        else None,
+                volume     = float(row["volume"])     if pd.notna(row.get("volume"))     else None,
+                turnover   = float(row["turnover"])   if pd.notna(row.get("turnover"))   else None,
+                pct_change = float(row["pct_change"]) if pd.notna(row.get("pct_change")) else None,
             ))
             saved += 1
 
+    db.commit()
+
     # ── 更新 asset_meta.is_cached ────────────────────
     meta = db.query(AssetMeta).filter(AssetMeta.code == code).first()
-    if meta:
+    if meta and saved > 0:
         meta.is_cached = 1
         meta.updated_at = datetime.now()
+        db.commit()
 
     return saved
 
@@ -484,21 +551,16 @@ def sync_single(code: str, asset_type: str = "stock",
     默认 5 年数据（指数/ETF 拉更长），传 None 表示拉取全部历史。
     返回 {"ok": bool, "saved": int, "message": str}
     """
-    # sector/index/commodity 类型传 None 表示拉全部历史，不设置默认日期
+    # 上界统一为 T-1；sector/index/commodity 首次拉全量历史，stock/etf 限年限
+    yesterday = date.today() - timedelta(days=1)
     if asset_type in ("sector_industry", "sector_concept", "index", "commodity"):
-        if start_date is None and end_date is None:
-            # 拉全部历史，不限制日期
-            pass
-        else:
-            if not end_date:
-                end_date = date.today()
-            if not start_date:
-                start_date = end_date - timedelta(days=365*10)
+        if end_date is None or end_date > yesterday:
+            end_date = yesterday
+        # start_date=None 表示拉全量历史（_fetch_and_cache 会处理增量）
     else:
-        if not end_date:
-            end_date = date.today()
+        if end_date is None or end_date > yesterday:
+            end_date = yesterday
         if not start_date:
-            # ETF 拉 10 年，个股拉 5 年
             days = 365 * 10 if asset_type == "etf" else 365 * 5
             start_date = end_date - timedelta(days=days)
 
@@ -534,13 +596,15 @@ def sync_batch(codes: list[str], asset_type: str = "stock",
     start_date / end_date 可选，默认 5 年。
     返回汇总报告。
     """
-    # sector/commodity 类型拉全部历史，其他按默认
-    if asset_type in ("sector_industry", "sector_concept", "commodity"):
-        # 拉全部历史
-        start_date, end_date = None, None
+    # 上界统一为 T-1；sector/commodity 不限 start（_fetch_and_cache 做增量判断）
+    yesterday = date.today() - timedelta(days=1)
+    if asset_type in ("sector_industry", "sector_concept", "commodity", "index"):
+        if end_date is None or end_date > yesterday:
+            end_date = yesterday
+        # start_date=None → _fetch_and_cache 自动走增量
     else:
-        if not end_date:
-            end_date = date.today()
+        if end_date is None or end_date > yesterday:
+            end_date = yesterday
         if not start_date:
             days = 365 * 10 if asset_type in ("index", "etf") else 365 * 5
             start_date = end_date - timedelta(days=days)
@@ -739,131 +803,147 @@ def sync_l2_industry_em() -> dict:
 
 def _fetch_em_sector_pages(symbol: str, name: str, db) -> int:
     """
-    分页获取东方财富板块历史数据，每次2年
-    返回保存的记录数
+    增量获取东方财富板块历史数据，按年分页（每次2年）。
+    - 首次：从1990年拉到T-1
+    - 后续：从 db_max+1 拉到T-1，若已是T-1则跳过
+    返回新增记录数
     """
-    from datetime import datetime, timedelta
-    
+    yesterday = date.today() - timedelta(days=1)
+
+    # ── 增量判断 ─────────────────────────────────────
+    existing = db.query(func.min(HistQuotesCache.date), func.max(HistQuotesCache.date)).filter(
+        HistQuotesCache.code == symbol
+    ).one_or_none()
+
+    if existing and existing[0] and existing[1]:
+        db_max = existing[1]
+        if db_max >= yesterday:
+            return 0  # 已是最新
+        fetch_start = db_max + timedelta(days=1)
+    else:
+        fetch_start = date(1990, 1, 1)
+
+    fetch_end = yesterday
+
     saved = 0
-    start_year = 1990
-    end_year = datetime.now().year + 1
-    
-    for year in range(start_year, end_year, 2):
-        start_date = f"{year}0101"
-        end_date = f"{min(year+1, end_year)}1231"
-        
+    # 按2年分段请求，减少单次数据量
+    cur = fetch_start
+    while cur <= fetch_end:
+        seg_end = min(date(cur.year + 1, 12, 31), fetch_end)
+        start_str = cur.strftime("%Y%m%d")
+        end_str   = seg_end.strftime("%Y%m%d")
+
         try:
-            df = ak.stock_board_industry_hist_em(symbol=name, period="日k", 
-                                                  start_date=start_date, end_date=end_date)
-            if df is None or df.empty:
-                continue
-            
-            # 列名映射
-            df["date"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
-            df = df.rename(columns={
-                "开盘": "open", "收盘": "close", "最高": "high",
-                "最低": "low", "成交量": "volume", "成交额": "turnover"
-            })
-            df["pct_change"] = df["close"].pct_change() * 100
-            
-            # 保存到数据库
-            for _, row in df.iterrows():
-                date_str = row["date"]
-                date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
-                
-                existing = db.query(HistQuotesCache).filter(
-                    HistQuotesCache.code == symbol,
-                    HistQuotesCache.date == date_obj
-                ).first()
-                
-                if not existing:
-                    db.add(HistQuotesCache(
-                        code=symbol,
-                        date=date_obj,
-                        open=float(row["open"]) if pd.notna(row.get("open")) else None,
-                        close=float(row["close"]),
-                        high=float(row["high"]) if pd.notna(row.get("high")) else None,
-                        low=float(row["low"]) if pd.notna(row.get("low")) else None,
-                        volume=float(row["volume"]) if pd.notna(row.get("volume")) else None,
-                        turnover=float(row["turnover"]) if pd.notna(row.get("turnover")) else None,
-                        pct_change=float(row["pct_change"]) if pd.notna(row.get("pct_change")) else None,
-                    ))
-                    saved += 1
-            
-            db.commit()
-            
+            df = ak.stock_board_industry_hist_em(
+                symbol=name, period="日k",
+                start_date=start_str, end_date=end_str
+            )
+            if df is not None and not df.empty:
+                df["date"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
+                df = df.rename(columns={
+                    "开盘": "open", "收盘": "close", "最高": "high",
+                    "最低": "low", "成交量": "volume", "成交额": "turnover"
+                })
+                df["pct_change"] = df["close"].pct_change() * 100
+
+                for _, row in df.iterrows():
+                    date_obj = datetime.strptime(row["date"], "%Y-%m-%d").date()
+                    if date_obj > fetch_end:
+                        continue
+                    if not db.query(HistQuotesCache).filter(
+                        HistQuotesCache.code == symbol,
+                        HistQuotesCache.date == date_obj
+                    ).first():
+                        db.add(HistQuotesCache(
+                            code=symbol, date=date_obj,
+                            open=float(row["open"])      if pd.notna(row.get("open"))      else None,
+                            close=float(row["close"]),
+                            high=float(row["high"])      if pd.notna(row.get("high"))      else None,
+                            low=float(row["low"])        if pd.notna(row.get("low"))       else None,
+                            volume=float(row["volume"])  if pd.notna(row.get("volume"))    else None,
+                            turnover=float(row["turnover"]) if pd.notna(row.get("turnover")) else None,
+                            pct_change=float(row["pct_change"]) if pd.notna(row.get("pct_change")) else None,
+                        ))
+                        saved += 1
+                db.commit()
         except Exception as e:
-            print(f"  [{symbol}] {year}-{year+1} 获取失败: {e}")
-            continue
-        
-        # 每次请求间隔1秒
+            print(f"  [{symbol}] {start_str}-{end_str} 获取失败: {e}")
+
+        cur = date(seg_end.year + 1, 1, 1) if seg_end.month == 12 else date(seg_end.year, seg_end.month + 1, 1)
         time.sleep(1)
-    
+
     return saved
 
 
 def _fetch_ths_sector_pages(symbol: str, name: str, db) -> int:
     """
-    分页获取同花顺板块历史数据，每次200条
-    返回保存的记录数
+    增量获取同花顺板块历史数据，按年分页（每次2年）。
+    - 首次：从1990年拉到T-1
+    - 后续：从 db_max+1 拉到T-1，若已是T-1则跳过
+    返回新增记录数
     """
-    from datetime import datetime, timedelta
-    
+    yesterday = date.today() - timedelta(days=1)
+
+    # ── 增量判断 ─────────────────────────────────────
+    existing = db.query(func.min(HistQuotesCache.date), func.max(HistQuotesCache.date)).filter(
+        HistQuotesCache.code == symbol
+    ).one_or_none()
+
+    if existing and existing[0] and existing[1]:
+        db_max = existing[1]
+        if db_max >= yesterday:
+            return 0  # 已是最新
+        fetch_start = db_max + timedelta(days=1)
+    else:
+        fetch_start = date(1990, 1, 1)
+
+    fetch_end = yesterday
+
     saved = 0
-    # 从1990年开始，每次获取2年数据（约500个交易日）
-    start_year = 1990
-    end_year = datetime.now().year + 1
-    
-    for year in range(start_year, end_year, 2):
-        start_date = f"{year}0101"
-        end_date = f"{min(year+1, end_year)}1231"
-        
+    cur = fetch_start
+    while cur <= fetch_end:
+        seg_end = min(date(cur.year + 1, 12, 31), fetch_end)
+        start_str = cur.strftime("%Y%m%d")
+        end_str   = seg_end.strftime("%Y%m%d")
+
         try:
-            df = ak.stock_board_industry_index_ths(symbol=name, start_date=start_date, end_date=end_date)
-            if df is None or df.empty:
-                continue
-                
-            # 处理数据
-            df["date"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
-            df = df.rename(columns={
-                "开盘价": "open", "收盘价": "close", "最高价": "high",
-                "最低价": "low", "成交量": "volume", "成交额": "turnover"
-            })
-            df["pct_change"] = df["close"].pct_change() * 100
-            
-            # 保存到数据库
-            for _, row in df.iterrows():
-                from datetime import datetime
-                date_str = row["date"]
-                date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
-                existing = db.query(HistQuotesCache).filter(
-                    HistQuotesCache.code == symbol,
-                    HistQuotesCache.date == date_obj
-                ).first()
-                
-                if not existing:
-                    db.add(HistQuotesCache(
-                        code=symbol,
-                        date=date_obj,
-                        open=float(row["open"]) if pd.notna(row.get("open")) else None,
-                        close=float(row["close"]),
-                        high=float(row["high"]) if pd.notna(row.get("high")) else None,
-                        low=float(row["low"]) if pd.notna(row.get("low")) else None,
-                        volume=float(row["volume"]) if pd.notna(row.get("volume")) else None,
-                        turnover=float(row["turnover"]) if pd.notna(row.get("turnover")) else None,
-                        pct_change=float(row["pct_change"]) if pd.notna(row.get("pct_change")) else None,
-                    ))
-                    saved += 1
-            
-            db.commit()
-            
+            df = ak.stock_board_industry_index_ths(
+                symbol=name, start_date=start_str, end_date=end_str
+            )
+            if df is not None and not df.empty:
+                df["date"] = pd.to_datetime(df["日期"]).dt.strftime("%Y-%m-%d")
+                df = df.rename(columns={
+                    "开盘价": "open", "收盘价": "close", "最高价": "high",
+                    "最低价": "low", "成交量": "volume", "成交额": "turnover"
+                })
+                df["pct_change"] = df["close"].pct_change() * 100
+
+                for _, row in df.iterrows():
+                    date_obj = datetime.strptime(row["date"], "%Y-%m-%d").date()
+                    if date_obj > fetch_end:
+                        continue
+                    if not db.query(HistQuotesCache).filter(
+                        HistQuotesCache.code == symbol,
+                        HistQuotesCache.date == date_obj
+                    ).first():
+                        db.add(HistQuotesCache(
+                            code=symbol, date=date_obj,
+                            open=float(row["open"])      if pd.notna(row.get("open"))      else None,
+                            close=float(row["close"]),
+                            high=float(row["high"])      if pd.notna(row.get("high"))      else None,
+                            low=float(row["low"])        if pd.notna(row.get("low"))       else None,
+                            volume=float(row["volume"])  if pd.notna(row.get("volume"))    else None,
+                            turnover=float(row["turnover"]) if pd.notna(row.get("turnover")) else None,
+                            pct_change=float(row["pct_change"]) if pd.notna(row.get("pct_change")) else None,
+                        ))
+                        saved += 1
+                db.commit()
         except Exception as e:
-            print(f"  [{symbol}] {year}-{year+1} 获取失败: {e}")
-            continue
-        
-        # 每次请求间隔1秒
+            print(f"  [{symbol}] {start_str}-{end_str} 获取失败: {e}")
+
+        cur = date(seg_end.year + 1, 1, 1) if seg_end.month == 12 else date(seg_end.year, seg_end.month + 1, 1)
         time.sleep(1)
-    
+
     return saved
 
 
@@ -970,6 +1050,117 @@ def sync_l3_concept() -> dict:
         db.close()
 
     return batch_result
+
+
+def sync_l3_theme_indexes() -> dict:
+    """
+    同步 L3 主题指数（持仓关联的中证/恒生系列指数）
+    - 只同步 positions.benchmark_index 中已存在的指数
+    - 首次全量，后续增量
+    """
+    from models import Position
+    
+    _set_progress("L3主题指数同步", 0, 1, "", "正在获取持仓关联指数列表...")
+    
+    db = SessionLocal()
+    try:
+        # 获取所有持仓关联的指数代码（去重）
+        positions = db.query(Position).filter(
+            Position.benchmark_index.isnot(None),
+            Position.benchmark_index != ""
+        ).all()
+        
+        # 去重并获取指数代码
+        index_codes = set()
+        for pos in positions:
+            code = pos.benchmark_index
+            if code:
+                index_codes.add(code)
+        
+        # 从 asset_meta 获取指数名称（优先），否则使用代码本身
+        index_names = {}
+        for code in index_codes:
+            meta = db.query(AssetMeta).filter(AssetMeta.code == code).first()
+            if meta and meta.name:
+                index_names[code] = meta.name
+            else:
+                index_names[code] = code
+        
+        codes = sorted(list(index_codes))
+        total = len(codes)
+        
+        if total == 0:
+            _set_progress("L3主题指数同步", 0, 1, "", "没有需要同步的指数")
+            return {"ok": True, "message": "没有需要同步的指数（positions.benchmark_index为空）", "total": 0, "saved": 0}
+        
+        _set_progress("L3主题指数同步", 0, total, "", f"开始同步 {total} 个主题指数...")
+        
+        results = []
+        total_saved = 0
+        
+        for i, code in enumerate(codes, 1):
+            name = index_names.get(code, code)
+            _set_progress("L3主题指数同步", i, total, code, f"正在同步 {name} ({i}/{total})")
+            print(f"[{i}/{total}] {code} {name}")
+            
+            try:
+                # 拉取全部历史（指数类型，不传日期限制）
+                saved = _fetch_and_cache(db, code, "index", None, None)
+
+                # 只有 DB 中确实有数据才标记 is_cached=1
+                has_data = saved > 0 or db.query(HistQuotesCache).filter(
+                    HistQuotesCache.code == code
+                ).count() > 0
+
+                # 更新或创建元数据
+                meta = db.query(AssetMeta).filter(AssetMeta.code == code).first()
+                if not meta:
+                    db.add(AssetMeta(
+                        code=code,
+                        name=name,
+                        asset_type="index",
+                        category="主题指数",
+                        source="csindex",
+                        is_cached=1 if has_data else 0
+                    ))
+                else:
+                    meta.name = name
+                    meta.asset_type = "index"
+                    meta.category = "主题指数"
+                    meta.source = "csindex"
+                    meta.is_cached = 1 if has_data else 0
+
+                db.commit()
+                results.append({"code": code, "name": name, "ok": has_data, "saved": saved})
+                total_saved += saved
+                status = f"✓ 保存 {saved} 条" if has_data else "✗ 无数据（跳过）"
+                print(f"  {status}")
+                
+            except Exception as e:
+                print(f"  ✗ 失败: {e}")
+                results.append({"code": code, "name": name, "ok": False, "error": str(e)})
+                db.rollback()
+                continue
+            
+            # 5秒间隔限速
+            if i < total:
+                time.sleep(_MIN_INTERVAL)
+        
+        success_count = sum(1 for r in results if r.get("ok"))
+        _clear_progress()
+        
+        return {
+            "ok": True,
+            "message": f"同步完成: {total} 个指数, {success_count} 成功, {total - success_count} 失败, 共 {total_saved} 条数据",
+            "total": total,
+            "success": success_count,
+            "saved": total_saved,
+            "results": results
+        }
+        
+    finally:
+        db.close()
+        _clear_progress()
 
 
 def sync_l6_commodity() -> dict:

@@ -44,6 +44,7 @@
               <el-radio-button value="price">净值</el-radio-button>
               <el-radio-button value="trend">趋势</el-radio-button>
               <el-radio-button value="compare">对比</el-radio-button>
+              <el-radio-button value="pe" :disabled="!hasPeData">PE</el-radio-button>
             </el-radio-group>
             <template v-if="chartMode === 'trend'">
               <el-radio-group v-model="trendIndicator" size="small" @change="onTrendIndicatorChange">
@@ -53,11 +54,13 @@
             </template>
             <template v-if="chartMode === 'compare'">
               <span style="font-size: 14px; color: #909399">基线:</span>
-              <el-select v-model="baselineCode" size="small" style="width: 160px" @change="onBaselineChange">
-                <el-option label="沪深300" value="000300" />
-                <el-option label="中证500" value="000905" />
-                <el-option label="中证1000" value="000852" />
-                <el-option label="上证50" value="000016" />
+              <el-select v-model="baselineCode" size="small" style="width: 180px" @change="onBaselineChange">
+                <el-option
+                  v-for="opt in baselineOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
               </el-select>
             </template>
           </div>
@@ -170,7 +173,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import VChart from 'vue-echarts'
-import { getPositionDetail, getPositionChart, updatePositionLinkedCode, suggestLinkedEtf, getPositions } from '../api'
+import { getPositionDetail, getPositionChart, updatePositionLinkedCode, suggestLinkedEtf, getPositions, getEtfPeData } from '../api'
 import axios from 'axios'
 
 const route = useRoute()
@@ -182,7 +185,9 @@ const detail = ref({})
 const chartData = ref({ prices: [], markers: [], baseline: [] })
 const period = ref('daily')
 const baselineCode = ref('000300')
-const chartMode = ref('price')  // 'price' = 净值模式, 'trend' = 趋势模式, 'compare' = 对比模式
+const chartMode = ref('price')  // 'price' = 净值模式, 'trend' = 趋势模式, 'compare' = 对比模式, 'pe' = PE走势模式
+const peData = ref([])  // PE数据
+const hasPeData = ref(false)  // 是否有PE数据
 const trendIndicator = ref('ma')  // 'ma' = MA指标, 'adx' = ADX指标（仅在趋势模式下有效）
 
 // 当前图表视图范围（响应dataZoom事件）
@@ -278,6 +283,31 @@ const stopLossConfigs = ref([])
 const profitLevels = ref([])
 
 const isEtf = computed(() => code.value?.startsWith('5') || code.value?.startsWith('15'))
+
+const KNOWN_INDICES = {
+  '000300': '沪深300',
+  '000905': '中证500',
+  '000852': '中证1000',
+  '000016': '上证50',
+  '000001': '上证指数',
+  '399001': '深证成指',
+  '399006': '创业板指',
+}
+
+const baselineOptions = computed(() => {
+  const defaults = [
+    { value: '000300', label: '沪深300' },
+    { value: '000905', label: '中证500' },
+    { value: '000852', label: '中证1000' },
+    { value: '000016', label: '上证50' },
+  ]
+  const benchmark = detail.value.benchmark_index
+  if (benchmark && !defaults.find(o => o.value === benchmark)) {
+    const name = KNOWN_INDICES[benchmark] || benchmark
+    defaults.unshift({ value: benchmark, label: `${name}（持仓基准）` })
+  }
+  return defaults
+})
 
 // 利润状态计算（从配置读取）
 const profitStatus = computed(() => {
@@ -502,7 +532,7 @@ const calculateInitialRange = () => {
 
 // 净值模式图表配置
 const buildPriceModeChart = (dates, closes, markers, safeStartIdx, safeEndIdx) => {
-  const etfName = detail.value.short_name || detail.value.name || code.value
+  const etfName = detail.value.name || code.value
 
   // 找到第一个买入日期
   const buyMarkers = markers.filter(m => m.direction === 'buy')
@@ -860,7 +890,7 @@ const calculateADX = (highs, lows, closes, period = 14) => {
 
 // 趋势模式：显示主指标线 + MA5/MA20/MA60/MA120 + ADX
 const buildTrendModeChart = (dates, closes, highs, lows, markers, safeStartIdx, safeEndIdx) => {
-  const etfName = detail.value.short_name || detail.value.name || code.value
+  const etfName = detail.value.name || code.value
 
   // 计算各周期均线
   const ma5 = calculateMA(closes, 5)
@@ -1091,6 +1121,136 @@ const buildTrendModeChart = (dates, closes, highs, lows, markers, safeStartIdx, 
   }
 }
 
+// PE模式：显示指数PE走势
+const buildPeModeChart = () => {
+  const peRecords = peData.value
+  if (!peRecords || peRecords.length === 0) return {}
+
+  // 按日期排序
+  const sorted = [...peRecords].sort((a, b) => new Date(a.date) - new Date(b.date))
+  const dates = sorted.map(p => p.date)
+  const pe1 = sorted.map(p => p.pe1)
+  const pe2 = sorted.map(p => p.pe2)
+  const dy1 = sorted.map(p => p.dividend_yield1)
+  const dy2 = sorted.map(p => p.dividend_yield2)
+
+  // 计算Y轴范围
+  const allPe = [...pe1, ...pe2].filter(v => v !== null && v !== undefined)
+  const peMin = Math.min(...allPe)
+  const peMax = Math.max(...allPe)
+  const peRange = peMax - peMin || 1
+
+  const allDy = [...dy1, ...dy2].filter(v => v !== null && v !== undefined)
+  const dyMin = Math.min(...allDy)
+  const dyMax = Math.max(...allDy)
+  const dyRange = dyMax - dyMin || 1
+
+  return {
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        const date = params[0].axisValue
+        let html = `<div style="font-weight:bold;margin-bottom:5px">${date}</div>`
+        params.forEach(p => {
+          const val = p.value?.toFixed(2) || '-'
+          if (p.seriesName.includes('PE')) {
+            html += `<div>${p.marker} ${p.seriesName}: <b>${val}</b></div>`
+          } else {
+            html += `<div>${p.marker} ${p.seriesName}: <b>${val}%</b></div>`
+          }
+        })
+        return html
+      }
+    },
+    legend: { 
+      data: ['PE1', 'PE2', '股息率1', '股息率2'], 
+      top: 10, 
+      selected: legendSelected.value 
+    },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLabel: {
+        rotate: dates.length > 30 ? 30 : 0,
+        fontSize: 11,
+      },
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: 'PE',
+        min: Math.max(0, peMin - peRange * 0.1),
+        max: peMax + peRange * 0.1,
+        axisLabel: { formatter: (v) => v.toFixed(1) },
+      },
+      {
+        type: 'value',
+        name: '股息率(%)',
+        min: Math.max(0, dyMin - dyRange * 0.1),
+        max: dyMax + dyRange * 0.1,
+        position: 'right',
+        axisLabel: { formatter: (v) => v.toFixed(2) + '%' },
+        splitLine: { show: false },
+      },
+    ],
+    dataZoom: [
+      {
+        type: 'inside',
+        start: viewRange.value.start,
+        end: viewRange.value.end,
+      },
+      {
+        type: 'slider',
+        start: viewRange.value.start,
+        end: viewRange.value.end,
+        height: 20,
+        bottom: 5,
+      },
+    ],
+    series: [
+      {
+        name: 'PE1',
+        type: 'line',
+        data: pe1,
+        smooth: true,
+        lineStyle: { width: 2, color: '#409eff' },
+        itemStyle: { color: '#409eff' },
+        symbol: 'none',
+      },
+      {
+        name: 'PE2',
+        type: 'line',
+        data: pe2,
+        smooth: true,
+        lineStyle: { width: 2, color: '#67c23a' },
+        itemStyle: { color: '#67c23a' },
+        symbol: 'none',
+      },
+      {
+        name: '股息率1',
+        type: 'line',
+        data: dy1,
+        smooth: true,
+        lineStyle: { width: 1.5, color: '#e6a23c', type: 'dashed' },
+        itemStyle: { color: '#e6a23c' },
+        symbol: 'none',
+        yAxisIndex: 1,
+      },
+      {
+        name: '股息率2',
+        type: 'line',
+        data: dy2,
+        smooth: true,
+        lineStyle: { width: 1.5, color: '#f56c6c', type: 'dashed' },
+        itemStyle: { color: '#f56c6c' },
+        symbol: 'none',
+        yAxisIndex: 1,
+      },
+    ],
+    grid: { left: '3%', right: '8%', top: 60, bottom: 60, containLabel: true },
+  }
+}
+
 const chartOption = computed(() => {
   const prices = chartData.value.prices
   const markers = chartData.value.markers
@@ -1102,7 +1262,7 @@ const chartOption = computed(() => {
   const closes = prices.map(p => p.close)
 
   // 基线数据映射
-  const baseMap = Object.fromEntries((baseline || []).map(d => [d.date, d.value]))
+  const baseMap = Object.fromEntries((baseline || []).map(d => [d.date, d.close]))
 
   // 获取当前视图的数据范围
   const zoom = viewRange.value
@@ -1121,6 +1281,11 @@ const chartOption = computed(() => {
     const highs = prices.map(p => p.high || p.close)
     const lows = prices.map(p => p.low || p.close)
     return buildTrendModeChart(dates, closes, highs, lows, markers, safeStartIdx, safeEndIdx)
+  }
+
+  // PE模式：显示指数PE走势
+  if (chartMode.value === 'pe') {
+    return buildPeModeChart()
   }
 
   // 对比模式：以视图第一天为基准，计算归一化百分比 (基准=100)
@@ -1221,11 +1386,11 @@ const chartOption = computed(() => {
     }
   }).filter(m => m !== null)
 
-  const etfName = detail.value.short_name || detail.value.name || code.value
+  const etfName = detail.value.name || code.value
 
   // 为tooltip准备原始价格映射
   const priceMap = Object.fromEntries(prices.map((p, i) => [dates[i], p.close]))
-  const basePriceMap = Object.fromEntries(baseline.map(b => [b.date, b.value]))
+  const basePriceMap = Object.fromEntries(baseline.map(b => [b.date, b.close]))
 
   return {
     tooltip: {
@@ -1301,11 +1466,17 @@ const chartOption = computed(() => {
 })
 
 const loadData = async () => {
-  const [dRes, cRes] = await Promise.all([
-    getPositionDetail(code.value),
-    getPositionChart(code.value, period.value, baselineCode.value),
-  ])
+  // 先加载 detail 以确定 benchmark_index，再用正确的 baselineCode 请求 chart
+  const dRes = await getPositionDetail(code.value)
   detail.value = dRes.data
+  baselineCode.value = detail.value.benchmark_index || '000300'
+
+  // detail 确定后，chart 和 PE 并行加载
+  const [cRes, peRes] = await Promise.all([
+    getPositionChart(code.value, period.value, baselineCode.value),
+    getEtfPeData(code.value).catch(() => ({ data: { ok: false, data: [] } })),
+  ])
+
   // 映射后端字段到前端字段：data -> prices, trades -> markers
   chartData.value = {
     prices: cRes.data.data || [],
@@ -1313,7 +1484,16 @@ const loadData = async () => {
     baseline: cRes.data.baseline || [],
     avg_cost: cRes.data.avg_cost
   }
-  
+
+  // 加载PE数据
+  if (peRes.data && peRes.data.ok && peRes.data.data && peRes.data.data.length > 0) {
+    peData.value = peRes.data.data
+    hasPeData.value = true
+  } else {
+    peData.value = []
+    hasPeData.value = false
+  }
+
   // 数据加载完成后，计算 viewRange
   const prices = chartData.value.prices
   if (prices && prices.length > 0 && visibleBarCount.value !== null) {
@@ -1384,9 +1564,9 @@ const onBaselineChange = async () => {
 }
 
 const onChartModeChange = async () => {
-  // 切换模式时保持当前日期范围不变
-  // 如果切换到对比模式且没有基线数据，重新加载
-  if (chartMode.value === 'compare' && (!chartData.value.baseline || chartData.value.baseline.length === 0)) {
+  // 切换到对比模式时始终用当前 baselineCode 重新加载基线数据
+  // 因为初始并行加载时 baselineCode 可能尚未根据 benchmark_index 更新
+  if (chartMode.value === 'compare') {
     const cRes = await getPositionChart(code.value, period.value, baselineCode.value)
     chartData.value = {
       prices: cRes.data.data || [],

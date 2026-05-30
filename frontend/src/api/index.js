@@ -5,6 +5,12 @@ const api = axios.create({
   timeout: 30000,
 })
 
+// 长耗时同步操作专用实例，不设超时
+const syncApi = axios.create({
+  baseURL: '/api',
+  timeout: 0,
+})
+
 // --- 交易 ---
 export const getTrades = (params) => api.get('/trades', { params })
 export const createTrade = (data) => api.post('/trades', data)
@@ -15,7 +21,7 @@ export const deleteTrade = (id) => api.delete(`/trades/${id}`)
 export const getPositions = () => api.get('/positions')
 export const getOverview = () => api.get('/positions/overview')
 export const getPositionDetail = (code) => api.get(`/positions/${code}`)
-export const getPositionChart = (code, period = 'daily', baselineCode = '') => api.get(`/positions/${code}/chart`, { params: { period, baseline_code: baselineCode || undefined } })
+export const getPositionChart = (code, period = 'daily', baselineCode = '') => api.get(`/positions/${code}/chart`, { params: { period, baseline: baselineCode || undefined } })
 export const getBaselineComparison = (code, baselineCode, period = 'daily') => api.get(`/positions/${code}/baseline`, { params: { baseline_code: baselineCode, period } })
 export const updatePositionCategory = (code, category) => api.patch(`/positions/${code}/category`, { category })
 export const updatePositionLinkedCode = (code, linkedCode, linkedName = null, linkedShortName = null) => api.patch(`/positions/${code}/linked-code`, { 
@@ -35,13 +41,18 @@ export const validateCode = (code) => api.get(`/quotes/validate/${code}`)
 export const getFundInfo = (code, date) => api.get(`/quotes/fund-info/${code}`, { params: { date } })
 
 // --- 行情同步 ---
-export const syncQuotes = () => api.post('/quotes/sync')
+export const syncQuotes = () => syncApi.post('/quotes/sync')
 export const getSyncProgress = (taskId) => api.get(`/quotes/sync-progress/${taskId}`)
 export const getLastSync = () => api.get('/quotes/last-sync')
 
 // --- 分红 ---
 export const detectDividends = (code) => api.get('/quotes/dividends', { params: { code } })
 export const confirmDividends = (dividends) => api.post('/quotes/dividends/confirm', dividends)
+
+// --- PE数据 ---
+export const getEtfPeData = (etfCode) => api.get(`/quotes/pe/${etfCode}`)
+export const getIndexPeData = (indexCode) => api.get(`/quotes/pe/index/${indexCode}`)
+export const syncPeData = () => api.post('/quotes/pe/sync')
 
 // --- 统计 ---
 export const getMonthlyStats = (year) => api.get('/stats/monthly', { params: { year } })
@@ -52,14 +63,15 @@ export const getYearlyPositionDetails = (year) => api.get(`/stats/yearly/${year}
 export default api
 
 // --- 历史行情分析 ---
-export const analysisCacheSync = (data) => api.post('/analysis/cache/sync', data)
-export const analysisCacheSyncBatch = (data) => api.post('/analysis/cache/sync-batch', data)
-export const analysisCacheSyncL1 = () => api.post('/analysis/cache/sync-l1')
-export const analysisCacheSyncL2 = () => api.post('/analysis/cache/sync-l2')
-export const analysisCacheSyncL6 = () => api.post('/analysis/cache/sync-l6')
-export const analysisCacheSyncL6C = () => api.post('/analysis/cache/sync-l6c')
+export const analysisCacheSync = (data) => syncApi.post('/analysis/cache/sync', data)
+export const analysisCacheSyncBatch = (data) => syncApi.post('/analysis/cache/sync-batch', data)
+export const analysisCacheSyncL1 = () => syncApi.post('/analysis/cache/sync-l1')
+export const analysisCacheSyncL2 = () => syncApi.post('/analysis/cache/sync-l2')
+export const analysisCacheSyncL6 = () => syncApi.post('/analysis/cache/sync-l6')
+export const analysisCacheSyncL6C = () => syncApi.post('/analysis/cache/sync-l6c')
+export const analysisCacheSyncL3Theme = () => syncApi.post('/analysis/cache/sync-l3-theme')
 export const analysisCacheStatus = () => api.get('/analysis/cache/status')
-export const analysisCacheProgress = () => api.get('/analysis/cache/progress')
+export const analysisCacheProgress = () => syncApi.get('/analysis/cache/progress')  // 同步期间后端忙，不设超时
 export const analysisPearson = (data) => api.post('/analysis/correlation/pearson', data)
 export const analysisCorrMatrix = (data) => api.post('/analysis/correlation/matrix', data)
 export const analysisCCF = (data) => api.post('/analysis/correlation/ccf', data)
@@ -74,3 +86,6 @@ export const analysisDataOHLCV = (code, limit = 100) => api.get('/analysis/data/
 export const analysisDataDistribution = (code, field = 'pct_change', bins = 20) => api.get('/analysis/data/distribution', { params: { code, field, bins } })
 export const analysisVolumeAnalysis = (code, limit = 100) => api.get('/analysis/data/volume-analysis', { params: { code, limit } })
 export const analysisDataStats = (code) => api.get('/analysis/data/stats', { params: { code } })
+
+// --- 参数寻优 ---
+export const analysisGridSearch = (data) => syncApi.post('/analysis/backtest/grid-search', data)

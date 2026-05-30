@@ -6,27 +6,9 @@ from datetime import date, datetime, timedelta
 
 import re
 
-# 常见基金公司后缀，用于生成短名
-_FUND_SUFFIXES = [
-    "华泰柏瑞", "嘉实", "华夏", "易方达", "南方", "广发", "天弘", "工银瑞信",
-    "银华", "鹏华", "博时", "国泰", "富国", "汇添富", "招商", "景顺长城",
-    "大成", "中银", "华安", "长盛", "诺安", "融通", "万家", "浦银安盛",
-    "建信", "交银施罗德", "兴证全球", "中欧", "泓德", "睿远", "东方",
-    "兴业", "长城", "平安", "海富通", "上投摩根", "泰康",
-]
-
-
-def _make_short_name(name: str, classify: str = "") -> str:
-    """生成简化名称：ETF去掉基金公司后缀，个股保持原名"""
-    if classify == "Fund" or "ETF" in name or "LOF" in name:
-        for suffix in _FUND_SUFFIXES:
-            if name.endswith(suffix):
-                return name[:-len(suffix)]
-    return name
-
 
 def _search_code(code: str) -> dict:
-    """用东方财富搜索接口快速校验代码，返回名称、短名和市场类型"""
+    """用东方财富搜索接口快速校验代码，返回名称和市场类型"""
     try:
         url = f"https://searchapi.eastmoney.com/api/suggest/get"
         params = {
@@ -40,10 +22,7 @@ def _search_code(code: str) -> dict:
         if data.get("QuotationCodeTable") and data["QuotationCodeTable"]["Data"]:
             for item in data["QuotationCodeTable"]["Data"]:
                 if item["Code"] == code:
-                    full_name = item["Name"]
-                    classify = item.get("Classify", "")
-                    short = _make_short_name(full_name, classify)
-                    return {"name": full_name, "short_name": short, "type": item.get("MktNum", "")}
+                    return {"name": item["Name"], "type": item.get("MktNum", "")}
     except Exception:
         pass
     return {}
@@ -614,7 +593,7 @@ def sync_single_position_history(code: str, db=None):
         yesterday = today - timedelta(days=1)
         
         # 拉取全部历史数据（只到昨天，避免实时数据不完整）
-        print(f"同步 {code}({pos.short_name or pos.name}) 全部历史数据...")
+        print(f"同步 {code}({pos.name}) 全部历史数据...")
         prices = get_hist_prices(code, "19000101", yesterday.strftime("%Y%m%d"))
         
         if not prices:
@@ -692,20 +671,20 @@ def fetch_and_save_history():
                                      yesterday.strftime("%Y%m%d"), "增量"))
 
                 if not gaps:
-                    print(f"  {pos.code}({pos.short_name or pos.name}) 数据已完整，跳过")
+                    print(f"  {pos.code}({pos.name}) 数据已完整，跳过")
                     continue
 
                 pos_saved = 0
                 for start_date, end_date, mode in gaps:
                     prices = get_hist_prices(pos.code, start_date, end_date)
                     if not prices:
-                        print(f"  {pos.code}({pos.short_name or pos.name}) {mode}同步无新数据")
+                        print(f"  {pos.code}({pos.name}) {mode}同步无新数据")
                         continue
 
                     saved = _save_snapshots(db, pos.code, prices)
                     pos_saved += saved
                     total_saved += saved
-                    print(f"  {pos.code}({pos.short_name or pos.name}) {mode}同步 {len(prices)} 条, 新增 {saved} 条")
+                    print(f"  {pos.code}({pos.name}) {mode}同步 {len(prices)} 条, 新增 {saved} 条")
 
                 # 更新当前价格（用昨天的收盘价）
                 if pos_saved > 0:
@@ -731,6 +710,10 @@ def fetch_and_save_history():
 
     # 重算 pnl
     recalc_snapshots_pnl()
+    
+    # 同步指数PE数据（持仓ETF关联的指数）
+    print("\n开始同步指数PE数据...")
+    sync_index_pe_data()
 
 
 def get_fund_dividends(code: str) -> list[dict]:
@@ -828,7 +811,7 @@ def get_etf_dividends(code: str) -> list[dict]:
 def detect_and_record_dividends(code: str = None) -> list[dict]:
     """检测持仓的分红记录，返回在首笔买入之后的分红列表
     
-    返回 [{code, name, short_name, date, dividend_per_unit, quantity, dividend_amount, price, reinvest_qty}, ...]
+    返回 [{code, name, date, dividend_per_unit, quantity, dividend_amount, price, reinvest_qty}, ...]
     """
     from database import SessionLocal
     from models import Trade, Position, DailySnapshot
@@ -919,7 +902,6 @@ def detect_and_record_dividends(code: str = None) -> list[dict]:
                 all_results.append({
                     "code": c,
                     "name": position.name,
-                    "short_name": position.short_name or position.name,
                     "date": div_date,
                     "dividend_per_unit": div_per_unit,
                     "quantity": qty_at_date,
@@ -931,3 +913,96 @@ def detect_and_record_dividends(code: str = None) -> list[dict]:
         return all_results
     finally:
         db.close()
+
+
+def sync_index_pe_data(db=None, index_codes: list[str] = None):
+    """同步指数PE数据到 index_pe_history 表
+    
+    Args:
+        db: 数据库会话，为None时自动创建
+        index_codes: 指定要同步的指数代码列表，为None时同步所有持仓关联的指数
+    
+    Returns:
+        同步的记录数
+    """
+    from database import SessionLocal
+    from models import Position, IndexPEHistory
+    from sqlalchemy import func
+
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
+    try:
+        # 如果没有指定指数代码，获取所有持仓关联的指数
+        if index_codes is None:
+            # 直接从positions表查询benchmark_index
+            results = db.query(Position.benchmark_index).filter(
+                Position.benchmark_index.isnot(None)
+            ).distinct().all()
+            index_codes = [r[0] for r in results if r[0]]
+        
+        if not index_codes:
+            print("没有需要同步PE数据的指数")
+            return 0
+        
+        today = date.today()
+        total_saved = 0
+        
+        for idx_code in index_codes:
+            try:
+                # 查询该指数已同步的最新日期
+                latest_record = db.query(IndexPEHistory).filter(
+                    IndexPEHistory.code == idx_code
+                ).order_by(IndexPEHistory.date.desc()).first()
+                
+                # 获取PE数据
+                df = ak.stock_zh_index_value_csindex(symbol=idx_code)
+                if df is None or df.empty:
+                    print(f"  {idx_code} 无PE数据")
+                    continue
+                
+                # 过滤已同步的数据
+                if latest_record:
+                    from pandas import to_datetime
+                    df['日期'] = to_datetime(df['日期']).dt.date
+                    df = df[df['日期'] > latest_record.date]
+                
+                if df.empty:
+                    print(f"  {idx_code} 无新PE数据")
+                    continue
+                
+                # 保存数据
+                saved = 0
+                for _, row in df.iterrows():
+                    pe_record = IndexPEHistory(
+                        code=idx_code,
+                        date=row['日期'],
+                        pe1=row.get('市盈率1'),
+                        pe2=row.get('市盈率2'),
+                        dividend_yield1=row.get('股息率1'),
+                        dividend_yield2=row.get('股息率2'),
+                        source='csindex'
+                    )
+                    db.add(pe_record)
+                    saved += 1
+                
+                db.commit()
+                total_saved += saved
+                print(f"  {idx_code} PE数据同步完成，新增 {saved} 条")
+                
+                # 避免请求过快
+                time.sleep(0.5)
+                
+            except Exception as e:
+                print(f"  同步 {idx_code} PE数据失败: {e}")
+                db.rollback()
+                continue
+        
+        print(f"PE数据同步完成，共新增 {total_saved} 条记录")
+        return total_saved
+        
+    finally:
+        if should_close:
+            db.close()

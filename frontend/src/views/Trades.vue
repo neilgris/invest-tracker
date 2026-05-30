@@ -187,7 +187,7 @@
       <el-table v-else :data="divList" stripe>
         <el-table-column prop="code" label="代码" width="80" />
         <el-table-column label="名称" width="140">
-          <template #default="{ row }">{{ row.short_name || row.name }}</template>
+          <template #default="{ row }">{{ row.name }}</template>
         </el-table-column>
         <el-table-column prop="date" label="分红日" width="110" />
         <el-table-column label="每份分红" width="100">

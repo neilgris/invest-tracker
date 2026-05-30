@@ -4,6 +4,7 @@
 
 | 版本 | 日期 | 变更说明 |
 |------|------|----------|
+| v1.4 | 2026-05-31 | PE估值分析、回测模块、统计重构、数据库清理 |
 | v1.3 | 2026-05-28 | 新增配置管理模块，数据库迁移支持，持仓统计优化 |
 | v1.2 | 2026-05-24 | 功能优化：改进持仓统计、数据分析逻辑，优化前端UI交互 |
 | v1.1 | 2026-05-14 | 清理仓库：移除构建产物、缓存文件和临时测试文件 |
@@ -46,16 +47,21 @@
 - 已清仓标的归档查看
 
 ### 3. 持仓详情
-- 价格走势图（日K线/折线图）
+- 价格走势图（日K线/折线图）：净值/趋势/对比/PE 四种模式
 - 买卖点标记（绿色▲买入/红色▼卖出）
+- PE 估值走势图（需配置 benchmark_index）
 - 细分统计：平均成本、最高最低价、持仓天数
 - 关联ETF对比（联接基金vs场内ETF）
 
 ### 4. 收益统计
-- 月度收益表：每月盈亏金额、收益率
+- 月度收益表：每月盈亏金额、收益率（已实现+浮动盈亏）
 - 年度收益汇总
 - 收益曲线图（按月/按年）
 - 月度/年度持仓收益明细
+
+### 7. 回测（新增）
+- 持仓标的历史区间回测
+- 买入持有、定投等策略对比
 
 ### 5. 行情同步
 - 自动同步：APScheduler每日15:30拉取收盘价
@@ -106,6 +112,7 @@
 | category | TEXT | 分类标签 |
 | linked_code | TEXT | 关联场内ETF代码 |
 | linked_name | TEXT | 关联ETF名称 |
+| benchmark_index | TEXT | 关联指数代码（用于PE查询） |
 | total_cost | REAL | 总成本 |
 | quantity | REAL | 持有数量 |
 | avg_cost | REAL | 平均成本 |
@@ -146,12 +153,15 @@
 | turnover | REAL | 成交额 |
 | pct_change | REAL | 涨跌幅% |
 
-#### asset_sector_mapping 个股板块映射表
+#### index_pe_history 指数PE历史表
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| stock_code | TEXT | 股票代码 |
-| sector_code | TEXT | 板块代码 |
-| sector_type | TEXT | industry/concept |
+| id | INTEGER PK | 主键 |
+| code | TEXT | 指数代码 |
+| date | DATE | 日期 |
+| pe1 / pe2 | REAL | 市盈率（中证指数提供） |
+| dividend_yield1/2 | REAL | 股息率 |
+| source | TEXT | 数据来源（csindex） |
 
 ## API 概览
 
@@ -176,6 +186,8 @@
 - `GET /dividends` - 检测分红记录
 - `POST /dividends/confirm` - 确认分红再投资
 - `GET /last-sync` - 上次同步时间
+- `GET /pe/{etf_code}` - 获取ETF关联指数PE历史
+- `GET /pe/index/{index_code}` - 直接查询指数PE历史
 
 ### 收益统计 `/api/stats`
 - `GET /monthly` - 月度统计
@@ -229,29 +241,37 @@ invest-tracker/
 │   ├── models.py               # SQLAlchemy模型
 │   ├── schemas.py              # Pydantic模型
 │   ├── scheduler.py            # 定时任务配置
+│   ├── migrations/             # 数据库迁移脚本
 │   ├── routers/
 │   │   ├── trades.py           # 交易API
 │   │   ├── positions.py        # 持仓API
-│   │   ├── quotes.py           # 行情同步API
+│   │   ├── quotes.py           # 行情同步+PE API
 │   │   ├── stats.py            # 统计API
-│   │   └── analysis.py         # 历史行情分析API
+│   │   ├── analysis.py         # 历史行情分析API
+│   │   └── config.py           # 配置管理API
 │   └── services/
 │       ├── market.py           # 行情数据获取
 │       ├── tracker.py          # 持仓计算
 │       ├── stats.py            # 统计分析
 │       └── analysis/           # 分析模块
 │           ├── data_fetcher.py # 数据获取与缓存
+│           ├── backtest.py     # 回测服务
 │           ├── correlation.py  # 相关性分析
 │           ├── pattern.py      # 特征规律挖掘
 │           └── report.py       # 报告生成
 ├── frontend/
 │   └── src/
+│       ├── components/         # 可复用组件
+│       │   ├── PeriodListCard.vue   # 收益期列表卡片
+│       │   └── PeriodDetailPanel.vue # 期内明细面板
 │       ├── views/              # 页面组件
 │       │   ├── Overview.vue    # 总览
 │       │   ├── Trades.vue      # 交易记录
-│       │   ├── PositionDetail.vue # 持仓详情
+│       │   ├── PositionDetail.vue # 持仓详情（含PE模式）
 │       │   ├── Stats.vue       # 收益统计
-│       │   └── Analysis.vue    # 历史行情分析
+│       │   ├── Analysis.vue    # 历史行情分析
+│       │   ├── Backtest.vue    # 回测
+│       │   └── Config.vue      # 配置管理
 │       └── api/index.js        # API封装
 ├── tests/                      # 测试文件
 └── README.md                   # 项目文档
