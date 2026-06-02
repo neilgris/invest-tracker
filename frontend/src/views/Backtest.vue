@@ -1005,13 +1005,13 @@ const formatParams = (row) => {
 const GRID_PARAM_META = {
   stop_loss_pct:        { label: '止损阈值%',      min: 1,  max: 50,  step: 1,   precision: 1, def: { min: 10, max: 25,  step: 5    } },
   reentry_cooldown:     { label: '再入场等待(日)',  min: 0,  max: 120, step: 5,   precision: 0, def: { min: 5,  max: 20,  step: 5    } },
-  reentry_pullback_pct: { label: '回撤入场阈值%',  min: 0,  max: 20,  step: 2,   precision: 1, def: { min: 0,  max: 10,  step: 2    } },
-  ma_entry_period:      { label: 'MA入场过滤(日)',  min: 0,  max: 250, step: 20,  precision: 0, def: { min: 0,  max: 200, step: 100  } },
-  ma_period:            { label: 'MA均线周期(日)',  min: 5,  max: 250, step: 20,  precision: 0, def: { min: 60, max: 200, step: 20   } },
+  reentry_pullback_pct: { label: '回撤入场阈值%',  min: 0,  max: 20,  step: 2,   precision: 1, def: { min: 0,  max: 0,   step: 0    } },  // 默认关闭，用户可手动开启
+  ma_entry_period:      { label: 'MA入场过滤(日)',  min: 0,  max: 250, step: 20,  precision: 0, def: { min: 0,  max: 0,   step: 0    } },  // 默认关闭；ma_cross 模式切换时自动开启
+  ma_period:            { label: 'MA均线周期(日)',  min: 5,  max: 250, step: 20,  precision: 0, def: { min: 60, max: 180, step: 60   } },  // 3档粗筛，用户可细化
   take_profit_pct:      { label: '止盈阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 10, max: 40,  step: 10   } },
   pmax_drawdown_pct:    { label: 'Pmax回撤%',     min: 1,  max: 50,  step: 1,    precision: 1, def: { min: 5,  max: 20,  step: 5    } },
   profit_trigger_pct:   { label: '激活阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 5, max: 30,  step: 5   } },
-  profit_retention_pct: { label: '浮盈保留比',    min: 0,  max: 1,   step: 0.05, precision: 2, def: { min: 0.3, max: 0.8, step: 0.05 } },
+  profit_retention_pct: { label: '浮盈保留比',    min: 0,  max: 1,   step: 0.05, precision: 2, def: { min: 0.3, max: 0.8, step: 0.1  } },  // step 0.1 → 6档（原0.05→11档）
   cost_trigger_pct:     { label: '激活阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 5,  max: 20,  step: 5    } },
   cost_floor_pct:       { label: '保护底线%',     min: 0,  max: 50,  step: 0.5,  precision: 1, def: { min: 0,  max: 5,   step: 2.5  } },
 }
@@ -1435,7 +1435,17 @@ const gridHeatmapOption = computed(() => {
 })
 
 // ── 侦听 ─────────────────────────────────────────────
-watch(() => gridForm.value.exit_mode, () => { gridResult.value = null })
+watch(() => gridForm.value.exit_mode, (newMode, oldMode) => {
+  gridResult.value = null
+  // ma_cross 模式：ma_entry_period 是核心参数，自动开启扫描
+  if (newMode === 'ma_cross' && oldMode !== 'ma_cross') {
+    gridForm.value.grid['ma_entry_period'] = { min: 0, max: 120, step: 60 }
+  }
+  // 离开 ma_cross：关闭 ma_entry_period 扫描（回归默认关闭）
+  if (newMode !== 'ma_cross' && oldMode === 'ma_cross') {
+    gridForm.value.grid['ma_entry_period'] = { min: 0, max: 0, step: 0 }
+  }
+})
 
 watch(() => gridForm.value.code, (code) => {
   gridResult.value = null
