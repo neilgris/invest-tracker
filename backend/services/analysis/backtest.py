@@ -686,7 +686,13 @@ def run_grid_search(db, code: str, exit_mode: str, grid: dict,
         "total_combos": n_combos,
         "sweep_params": swept_params,
         "best": {
-            "params":             {k: v for k, v in best_params.items() if k in swept_params},
+            # swept_params 为空（如从历史回放单点运行）时，返回所有有效参数
+            "params": (
+                {k: v for k, v in best_params.items() if k in swept_params}
+                if swept_params
+                else {k: v for k, v in best_params.items()
+                      if k not in ("exit_mode", "reentry_lookback")}
+            ),
             "total_return_pct":   best["total_return_pct"],
             "ann_return_pct":     best["ann_return_pct"],
             "max_drawdown":       best["max_drawdown"],

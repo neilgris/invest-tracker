@@ -1062,8 +1062,11 @@ const gridParamLabel = (key) => GRID_PARAM_META[key]?.label || key
 
 const gridBestParamsText = computed(() => {
   if (!gridResult.value) return ''
-  const p = gridResult.value.best.params
-  return gridResult.value.sweep_params.map(k => `${gridParamLabel(k)}=${p[k]}`).join('  ')
+  const p     = gridResult.value.best.params || {}
+  const swept = gridResult.value.sweep_params || []
+  // swept 为空（历史回放单点）时，用 best.params 的所有键
+  const keys  = swept.length > 0 ? swept : Object.keys(p)
+  return keys.map(k => `${gridParamLabel(k)}=${p[k]}`).join('  ')
 })
 
 // ── 数据加载 ──────────────────────────────────────────
