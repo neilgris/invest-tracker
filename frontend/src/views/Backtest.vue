@@ -540,7 +540,7 @@
           </el-table-column>
 
           <!-- 得分 -->
-          <el-table-column width="78" sortable prop="calmar">
+          <el-table-column width="65" sortable prop="calmar">
             <template #header>
               <el-tooltip placement="top" :show-after="300" effect="dark">
                 <template #content>
@@ -581,7 +581,7 @@
           </el-table-column>
 
           <!-- 最大回撤 -->
-          <el-table-column width="82" sortable prop="max_drawdown">
+          <el-table-column width="90" sortable prop="max_drawdown">
             <template #header>
               <el-tooltip placement="top" :show-after="300" effect="dark">
                 <template #content>
@@ -600,7 +600,7 @@
           </el-table-column>
 
           <!-- Calmar -->
-          <el-table-column width="75" sortable prop="calmar">
+          <el-table-column width="85" sortable prop="calmar">
             <template #header>
               <el-tooltip placement="top" :show-after="300" effect="dark">
                 <template #content>
@@ -619,7 +619,7 @@
           </el-table-column>
 
           <!-- 盈亏比 -->
-          <el-table-column width="75" sortable prop="profit_factor">
+          <el-table-column width="80" sortable prop="profit_factor">
             <template #header>
               <el-tooltip placement="top" :show-after="300" effect="dark">
                 <template #content>
@@ -638,7 +638,7 @@
           </el-table-column>
 
           <!-- Sortino -->
-          <el-table-column width="72" sortable prop="sortino">
+          <el-table-column width="85" sortable prop="sortino">
             <template #header>
               <el-tooltip placement="top" :show-after="300" effect="dark">
                 <template #content>
@@ -657,7 +657,7 @@
           </el-table-column>
 
           <!-- Whipsaw -->
-          <el-table-column width="80" sortable prop="whipsaw_rate_pct">
+          <el-table-column width="95" sortable prop="whipsaw_rate_pct">
             <template #header>
               <el-tooltip placement="top" :show-after="300" effect="dark">
                 <template #content>
@@ -677,7 +677,7 @@
           </el-table-column>
 
           <!-- 连亏 -->
-          <el-table-column width="68" sortable prop="max_consec_loss">
+          <el-table-column width="90" sortable prop="max_consec_loss">
             <template #header>
               <el-tooltip placement="top" :show-after="300" effect="dark">
                 <template #content>
@@ -696,7 +696,7 @@
           </el-table-column>
 
           <!-- 恢复期 -->
-          <el-table-column width="78" sortable prop="recovery_days">
+          <el-table-column width="100" sortable prop="recovery_days">
             <template #header>
               <el-tooltip placement="top" :show-after="300" effect="dark">
                 <template #content>
@@ -738,7 +738,7 @@
           </el-table-column>
 
           <!-- B&H -->
-          <el-table-column width="72" sortable prop="bh_return">
+          <el-table-column width="80" sortable prop="bh_return">
             <template #header>
               <el-tooltip placement="top" :show-after="300" effect="dark">
                 <template #content>
@@ -769,7 +769,7 @@
           </el-table-column>
 
           <!-- 时间（最后展示，聚焦指标优先） -->
-          <el-table-column prop="created_at" width="150" sortable>
+          <el-table-column prop="created_at" width="130" sortable>
             <template #header>
               <el-tooltip content="寻优执行时间" placement="top" :show-after="300">
                 <span class="col-tip">时间</span>
@@ -781,7 +781,7 @@
           </el-table-column>
 
           <!-- 操作 -->
-          <el-table-column width="110" fixed="right">
+          <el-table-column width="130" fixed="right">
             <template #header>操作</template>
             <template #default="{ row }">
               <el-button
@@ -1225,12 +1225,49 @@ const gridBestTradeOption = computed(() => {
     splitDate = dates.find(d => d >= g.test_period.start) || null
   }
 
-  return {
-    tooltip: { trigger: 'axis', formatter: params => {
-      const p = params[0]
-      return `${p?.axisValue}<br/>价格: <b>${(+p?.value || 0).toFixed(3)}</b>`
-    }},
-    grid: { left: '6%', right: '2%', top: '8%', bottom: '20%' },
+  // ── MA 均线（仅 ma_cross 模式显示）──────────────────
+  const maSeriesList = []
+  if (g.exit_mode === 'ma_cross') {
+    const MA_CONFIGS = [
+      { period: 20,  color: '#e6a23c', width: 1 },
+      { period: 60,  color: '#67c23a', width: 1.5 },
+      { period: 120, color: '#f56c6c', width: 1.5 },
+      { period: 180, color: '#909399', width: 1 },
+    ]
+    const computeMA = (arr, n) =>
+      arr.map((_, i) => i < n - 1
+        ? null
+        : +(arr.slice(i - n + 1, i + 1).reduce((s, v) => s + v, 0) / n).toFixed(3)
+      )
+
+    for (const { period, color, width } of MA_CONFIGS) {
+      maSeriesList.push({
+        name: `MA${period}`,
+        type: 'line',
+        data: computeMA(closes, period),
+        symbol: 'none',
+        z: 5,
+        lineStyle: { color, width, type: 'solid' },
+        connectNulls: false,
+      })
+    }
+  }
+
+    return {
+    tooltip: {
+      trigger: 'axis',
+      formatter: params => {
+        const price = params.find(p => p.seriesName === '收盘价')
+        let html = `${params[0]?.axisValue}<br/>价格: <b>${(+price?.value || 0).toFixed(3)}</b>`
+        params.filter(p => p.seriesName.startsWith('MA') && p.value != null)
+              .forEach(p => { html += `<br/>${p.marker}${p.seriesName}: ${p.value}` })
+        return html
+      }
+    },
+    legend: g.exit_mode === 'ma_cross'
+      ? { data: ['收盘价', 'MA20', 'MA60', 'MA120', 'MA180'], top: 0, right: 0, itemWidth: 14, textStyle: { fontSize: 11 } }
+      : { show: false },
+    grid: { left: '6%', right: '2%', top: g.exit_mode === 'ma_cross' ? '28px' : '8%', bottom: '20%' },
     dataZoom: [
       { type: 'inside', start: 0, end: 100 },
       { type: 'slider', start: 0, end: 100, height: 18, bottom: 6 },
@@ -1238,21 +1275,24 @@ const gridBestTradeOption = computed(() => {
     xAxis: { type: 'category', data: dates, boundaryGap: false,
              axisLabel: { formatter: v => v.slice(0, 7), fontSize: 11 } },
     yAxis: { type: 'value', scale: true, axisLabel: { formatter: v => v.toFixed(1) } },
-    series: [{
-      name: '收盘价', type: 'line', data: closes, symbol: 'none', z: 10,
-      lineStyle: { color: '#409EFF', width: 1.5 },
-      markArea: { silent: true, data: holdAreas },
-      markPoint: { data: markPoints, tooltip: { formatter: p => p.name } },
-      ...(splitDate ? {
-        markLine: {
-          symbol: ['none', 'none'], silent: true,
-          lineStyle: { color: '#f56c6c', type: 'dashed', width: 2 },
-          label: { show: true, formatter: '← 样本内 | 样本外 →',
-                   color: '#f56c6c', fontSize: 11, position: 'insideEndTop' },
-          data: [{ xAxis: splitDate }],
-        }
-      } : {}),
-    }],
+    series: [
+      {
+        name: '收盘价', type: 'line', data: closes, symbol: 'none', z: 10,
+        lineStyle: { color: '#409EFF', width: 1.5 },
+        markArea:  { silent: true, data: holdAreas },
+        markPoint: { data: markPoints, tooltip: { formatter: p => p.name } },
+        ...(splitDate ? {
+          markLine: {
+            symbol: ['none', 'none'], silent: true,
+            lineStyle: { color: '#f56c6c', type: 'dashed', width: 2 },
+            label: { show: true, formatter: '← 样本内 | 样本外 →',
+                     color: '#f56c6c', fontSize: 11, position: 'insideEndTop' },
+            data: [{ xAxis: splitDate }],
+          }
+        } : {}),
+      },
+      ...maSeriesList,
+    ],
   }
 })
 
