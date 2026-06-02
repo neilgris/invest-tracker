@@ -243,12 +243,12 @@
                 <el-text type="info" size="small">
                   <template v-if="gridBestChartView === 'trade'">
                     <span style="color:#67c23a">▲</span>&nbsp;买入&nbsp;
-                    <span style="color:#67c23a">●</span>&nbsp;盈利退出&nbsp;
+                    <span style="color:#f56c6c">●</span>&nbsp;盈利退出&nbsp;
                     <span style="color:#e6a23c">▼</span>&nbsp;亏损退出&nbsp;
                     <span style="color:#909399">■</span>&nbsp;时间止损&nbsp;
                     <span style="color:#409eff">◆</span>&nbsp;持有中&nbsp;&nbsp;
-                    <span style="background:rgba(103,194,58,0.28);padding:0 4px;border-radius:2px">盈利持仓</span>&nbsp;
-                    <span style="background:rgba(245,108,108,0.28);padding:0 4px;border-radius:2px">亏损持仓</span>
+                    <span style="background:rgba(245,108,108,0.20);padding:0 4px;border-radius:2px">盈利持仓</span>&nbsp;
+                    <span style="background:rgba(103,194,58,0.20);padding:0 4px;border-radius:2px">亏损持仓</span>
                   </template>
                   <template v-else-if="gridBestChartView === 'curve'">
                     <span style="color:#409eff">━</span>&nbsp;策略净值&nbsp;
@@ -1018,15 +1018,15 @@ const formatParams = (row) => {
 
 // ── 参数元数据 ────────────────────────────────────────
 const GRID_PARAM_META = {
-  stop_loss_pct:        { label: '止损阈值%',      min: 1,  max: 50,  step: 1,   precision: 1, def: { min: 10, max: 25,  step: 5    } },
-  reentry_cooldown:     { label: '再入场等待(日)',  min: 0,  max: 120, step: 5,   precision: 0, def: { min: 5,  max: 20,  step: 5    } },
+  stop_loss_pct:        { label: '止损阈值%',      min: 1,  max: 50,  step: 1,   precision: 1, def: { min: 10, max: 30,  step: 5    } },
+  reentry_cooldown:     { label: '再入场等待(日)',  min: 0,  max: 120, step: 5,   precision: 0, def: { min: 5,  max: 30,  step: 5    } },
   reentry_pullback_pct: { label: '回撤入场阈值%',  min: 0,  max: 20,  step: 2,   precision: 1,
     def: { min: 0, max: 0, step: 0 }, enableDef: { min: 0, max: 10, step: 2 }, optional: true },
   ma_entry_period:      { label: 'MA入场过滤(日)',  min: 0,  max: 250, step: 20,  precision: 0,
     def: { min: 0, max: 0, step: 0 }, enableDef: { min: 0, max: 200, step: 100 }, optional: true },
-  ma_period:            { label: 'MA均线周期(日)',  min: 5,  max: 250, step: 20,  precision: 0, def: { min: 60, max: 180, step: 60   } },  // 3档粗筛，用户可细化
-  take_profit_pct:      { label: '止盈阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 10, max: 40,  step: 10   } },
-  pmax_drawdown_pct:    { label: 'Pmax回撤%',     min: 1,  max: 50,  step: 1,    precision: 1, def: { min: 5,  max: 20,  step: 5    } },
+  ma_period:            { label: 'MA均线周期(日)',  min: 5,  max: 250, step: 20,  precision: 0, def: { min: 20, max: 200, step: 20   } },  // 3档粗筛，用户可细化
+  take_profit_pct:      { label: '止盈阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 10, max: 80,  step: 10   } },
+  pmax_drawdown_pct:    { label: 'Pmax回撤%',     min: 1,  max: 50,  step: 1,    precision: 1, def: { min: 5,  max: 30,  step: 5    } },
   profit_trigger_pct:   { label: '激活阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 5, max: 30,  step: 5   } },
   profit_retention_pct: { label: '浮盈保留比',    min: 0,  max: 1,   step: 0.05, precision: 2, def: { min: 0.3, max: 0.8, step: 0.1  } },  // step 0.1 → 6档（原0.05→11档）
   cost_trigger_pct:     { label: '激活阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 5,  max: 20,  step: 5    } },
@@ -1079,7 +1079,7 @@ const enableOptionalParam = (key) => {
   if (!meta) return
   // ma_cross 模式下 ma_entry_period 使用专属默认
   if (key === 'ma_entry_period' && gridForm.value.exit_mode === 'ma_cross') {
-    gridForm.value.grid[key] = { min: 0, max: 120, step: 60 }
+    gridForm.value.grid[key] = { min: 20, max: 200, step: 20 }
   } else {
     gridForm.value.grid[key] = { ...(meta.enableDef || meta.def) }
   }
@@ -1233,9 +1233,9 @@ const gridBestTradeOption = computed(() => {
   const holdAreas = trades.map(t => {
     const endD = t.sell_date || lastDate
     let color
-    if (t.sell_reason === '持有中')  color = 'rgba(64,158,255,0.22)'
-    else if (t.pct > 0)             color = 'rgba(103,194,58,0.30)'
-    else                            color = 'rgba(245,108,108,0.30)'
+    if (t.sell_reason === '持有中')  color = 'rgba(64,158,255,0.18)'   // 蓝：持有中
+    else if (t.pct > 0)             color = 'rgba(245,108,108,0.18)'  // 红：盈利（与 profit=#f56c6c 一致）
+    else                            color = 'rgba(103,194,58,0.18)'   // 绿：亏损（与 loss=#67c23a 一致）
     return [{ xAxis: t.buy_date, itemStyle: { color } }, { xAxis: endD }]
   })
 
@@ -1246,7 +1246,7 @@ const gridBestTradeOption = computed(() => {
       markPoints.push({
         coord: [bi, closes[bi]],
         symbol: 'triangle', symbolSize: 9, symbolRotate: 0,
-        itemStyle: { color: '#67c23a' }, label: { show: false },
+        itemStyle: { color: '#67c23a' }, label: { show: false },  // 绿：买入（入场信号）
         name: `买入 ${t.buy_date}  @${t.buy_price}`,
       })
     }
@@ -1254,10 +1254,10 @@ const gridBestTradeOption = computed(() => {
       const si = dateIdx[t.sell_date]
       if (si != null) {
         let sym, sz, rot, col
-        if (t.sell_reason?.includes('时间'))     { sym='rect';     sz=7; rot=0;   col='#909399' }
-        else if (t.sell_reason === '持有中')      { sym='diamond';  sz=8; rot=0;   col='#409eff' }
-        else if (t.pct > 0)                      { sym='circle';   sz=8; rot=0;   col='#67c23a' }
-        else                                      { sym='triangle'; sz=9; rot=180; col='#e6a23c' }
+        if (t.sell_reason?.includes('时间'))     { sym='rect';     sz=7; rot=0;   col='#909399' }  // 灰：时间止损
+        else if (t.sell_reason === '持有中')      { sym='diamond';  sz=8; rot=0;   col='#409eff' }  // 蓝：持有中
+        else if (t.pct > 0)                      { sym='circle';   sz=8; rot=0;   col='#f56c6c' }  // 红：盈利退出（与 profit=#f56c6c 一致）
+        else                                      { sym='triangle'; sz=9; rot=180; col='#e6a23c' }  // 橙：亏损退出
         markPoints.push({
           coord: [si, closes[si]],
           symbol: sym, symbolSize: sz, symbolRotate: rot,
@@ -1277,10 +1277,10 @@ const gridBestTradeOption = computed(() => {
   const maSeriesList = []
   if (g.exit_mode === 'ma_cross') {
     const MA_CONFIGS = [
-      { period: 20,  color: '#e6a23c', width: 1 },
-      { period: 60,  color: '#67c23a', width: 1.5 },
-      { period: 120, color: '#f56c6c', width: 1.5 },
-      { period: 180, color: '#909399', width: 1 },
+      { period: 20,  color: '#fac858', width: 1   },  // 金黄，短期
+      { period: 60,  color: '#20c997', width: 1.5 },  // 青绿，避免与买入绿(#67c23a)混淆
+      { period: 120, color: '#ee6666', width: 1.5 },  // 珊瑚红，避免与盈利红(#f56c6c)完全相同
+      { period: 180, color: '#adb5bd', width: 1   },  // 银灰，避免与时间止损灰(#909399)重叠
     ]
     const computeMA = (arr, n) =>
       arr.map((_, i) => i < n - 1
@@ -1475,7 +1475,7 @@ watch(() => gridForm.value.exit_mode, (newMode, oldMode) => {
   gridResult.value = null
   // ma_cross 模式：ma_entry_period 是核心参数，自动开启扫描
   if (newMode === 'ma_cross' && oldMode !== 'ma_cross') {
-    gridForm.value.grid['ma_entry_period'] = { min: 0, max: 120, step: 60 }
+    gridForm.value.grid['ma_entry_period'] = { min: 20, max: 200, step: 20 }
   }
   // 离开 ma_cross：关闭 ma_entry_period 扫描（回归默认关闭）
   if (newMode !== 'ma_cross' && oldMode === 'ma_cross') {
