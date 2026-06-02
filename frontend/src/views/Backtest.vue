@@ -71,20 +71,35 @@
               </el-tag>
             </div>
           </template>
-          <div v-for="p in gridVisibleParams" :key="p.key" style="margin-bottom:16px">
-            <div style="font-size:13px;color:#606266;margin-bottom:4px">
-              <b>{{ p.label }}</b>
-              <el-text type="info" size="small" style="margin-left:6px">（{{ gridSteps(p.key) }} 档）</el-text>
+          <template v-for="p in gridVisibleParams" :key="p.key">
+            <!-- 可选参数：未启用时折叠 -->
+            <div v-if="p.optional && !isParamEnabled(p.key)"
+                 style="margin-bottom:10px;display:flex;align-items:center;gap:6px">
+              <span style="font-size:12px;color:#c0c4cc">{{ p.label }}</span>
+              <el-button size="small" link type="primary" @click="enableOptionalParam(p.key)">
+                + 启用
+              </el-button>
             </div>
-            <div v-if="PARAM_DESC[p.key]" class="param-desc" style="margin-bottom:6px">{{ PARAM_DESC[p.key] }}</div>
-            <div style="display:flex;gap:6px;align-items:center">
-              <el-input-number v-model="gridForm.grid[p.key].min" :min="p.min" :max="p.max" :step="p.step" :precision="p.precision" size="small" controls-position="right" style="width:33%" />
-              <span style="color:#C0C4CC">~</span>
-              <el-input-number v-model="gridForm.grid[p.key].max" :min="p.min" :max="p.max" :step="p.step" :precision="p.precision" size="small" controls-position="right" style="width:33%" />
-              <span style="color:#C0C4CC">步</span>
-              <el-input-number v-model="gridForm.grid[p.key].step" :min="0" :max="p.max" :step="p.step" :precision="p.precision" size="small" controls-position="right" style="width:33%" />
+
+            <!-- 非可选参数 / 已启用的可选参数：正常显示 -->
+            <div v-else style="margin-bottom:16px">
+              <div style="font-size:13px;color:#606266;margin-bottom:4px;display:flex;align-items:center;gap:6px">
+                <b>{{ p.label }}</b>
+                <el-text type="info" size="small">（{{ gridSteps(p.key) }} 档）</el-text>
+                <el-button v-if="p.optional" size="small" link type="danger"
+                           style="font-size:11px;padding:0;margin-left:4px"
+                           @click="disableOptionalParam(p.key)">停用</el-button>
+              </div>
+              <div v-if="PARAM_DESC[p.key]" class="param-desc" style="margin-bottom:6px">{{ PARAM_DESC[p.key] }}</div>
+              <div style="display:flex;gap:6px;align-items:center">
+                <el-input-number v-model="gridForm.grid[p.key].min" :min="p.min" :max="p.max" :step="p.step" :precision="p.precision" size="small" controls-position="right" style="width:33%" />
+                <span style="color:#C0C4CC">~</span>
+                <el-input-number v-model="gridForm.grid[p.key].max" :min="p.min" :max="p.max" :step="p.step" :precision="p.precision" size="small" controls-position="right" style="width:33%" />
+                <span style="color:#C0C4CC">步</span>
+                <el-input-number v-model="gridForm.grid[p.key].step" :min="0" :max="p.max" :step="p.step" :precision="p.precision" size="small" controls-position="right" style="width:33%" />
+              </div>
             </div>
-          </div>
+          </template>
           <el-text type="info" size="small">步长=0 或 起=止 表示该参数固定不扫</el-text>
         </el-card>
 
@@ -1005,8 +1020,10 @@ const formatParams = (row) => {
 const GRID_PARAM_META = {
   stop_loss_pct:        { label: '止损阈值%',      min: 1,  max: 50,  step: 1,   precision: 1, def: { min: 10, max: 25,  step: 5    } },
   reentry_cooldown:     { label: '再入场等待(日)',  min: 0,  max: 120, step: 5,   precision: 0, def: { min: 5,  max: 20,  step: 5    } },
-  reentry_pullback_pct: { label: '回撤入场阈值%',  min: 0,  max: 20,  step: 2,   precision: 1, def: { min: 0,  max: 0,   step: 0    } },  // 默认关闭，用户可手动开启
-  ma_entry_period:      { label: 'MA入场过滤(日)',  min: 0,  max: 250, step: 20,  precision: 0, def: { min: 0,  max: 0,   step: 0    } },  // 默认关闭；ma_cross 模式切换时自动开启
+  reentry_pullback_pct: { label: '回撤入场阈值%',  min: 0,  max: 20,  step: 2,   precision: 1,
+    def: { min: 0, max: 0, step: 0 }, enableDef: { min: 0, max: 10, step: 2 }, optional: true },
+  ma_entry_period:      { label: 'MA入场过滤(日)',  min: 0,  max: 250, step: 20,  precision: 0,
+    def: { min: 0, max: 0, step: 0 }, enableDef: { min: 0, max: 200, step: 100 }, optional: true },
   ma_period:            { label: 'MA均线周期(日)',  min: 5,  max: 250, step: 20,  precision: 0, def: { min: 60, max: 180, step: 60   } },  // 3档粗筛，用户可细化
   take_profit_pct:      { label: '止盈阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 10, max: 40,  step: 10   } },
   pmax_drawdown_pct:    { label: 'Pmax回撤%',     min: 1,  max: 50,  step: 1,    precision: 1, def: { min: 5,  max: 20,  step: 5    } },
@@ -1051,6 +1068,25 @@ const gridVisibleParams = computed(() => {
   const keys = [...common, ...(MODE_SWEEP_PARAMS[gridForm.value.exit_mode] || [])]
   return keys.map(k => ({ key: k, ...GRID_PARAM_META[k] }))
 })
+
+// ── 可选参数动态显示/隐藏 ────────────────────────────
+const isParamEnabled = (key) => {
+  const g = gridForm.value.grid[key]
+  return g && (g.min > 0 || g.max > 0 || g.step > 0)
+}
+const enableOptionalParam = (key) => {
+  const meta = GRID_PARAM_META[key]
+  if (!meta) return
+  // ma_cross 模式下 ma_entry_period 使用专属默认
+  if (key === 'ma_entry_period' && gridForm.value.exit_mode === 'ma_cross') {
+    gridForm.value.grid[key] = { min: 0, max: 120, step: 60 }
+  } else {
+    gridForm.value.grid[key] = { ...(meta.enableDef || meta.def) }
+  }
+}
+const disableOptionalParam = (key) => {
+  gridForm.value.grid[key] = { min: 0, max: 0, step: 0 }
+}
 
 const gridSteps = (key) => {
   const g = gridForm.value.grid[key]
