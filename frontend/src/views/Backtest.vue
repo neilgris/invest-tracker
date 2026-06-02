@@ -514,53 +514,245 @@
           row-key="id"
           :default-sort="{ prop: 'created_at', order: 'descending' }"
         >
-          <el-table-column prop="created_at" label="时间" width="150" sortable>
+          <!-- 时间 -->
+          <el-table-column prop="created_at" width="150" sortable>
+            <template #header>
+              <el-tooltip content="寻优执行时间" placement="top" :show-after="300">
+                <span class="col-tip">时间</span>
+              </el-tooltip>
+            </template>
             <template #default="{ row }">
               <span style="font-size:12px">{{ row.created_at?.slice(0,16).replace('T',' ') }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="标的" width="130">
+
+          <!-- 标的 -->
+          <el-table-column width="130">
+            <template #header>
+              <el-tooltip content="标的代码和名称" placement="top" :show-after="300">
+                <span class="col-tip">标的</span>
+              </el-tooltip>
+            </template>
             <template #default="{ row }">
               <div style="font-weight:bold">{{ row.asset_name || row.code }}</div>
               <div style="color:#909399;font-size:11px">{{ row.code }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="模式" width="105">
+
+          <!-- 退出模式 -->
+          <el-table-column width="105">
+            <template #header>
+              <el-tooltip content="使用的退出策略模式" placement="top" :show-after="300">
+                <span class="col-tip">退出模式</span>
+              </el-tooltip>
+            </template>
             <template #default="{ row }">
               <el-tag size="small" :type="exitModeTagType(row.exit_mode)">{{ exitModeLabel(row.exit_mode) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="最优参数" min-width="160" show-overflow-tooltip>
+
+          <!-- 最优参数 -->
+          <el-table-column min-width="170" show-overflow-tooltip>
+            <template #header>
+              <el-tooltip content="本次寻优找到的最优参数组合" placement="top" :show-after="300">
+                <span class="col-tip">最优参数</span>
+              </el-tooltip>
+            </template>
             <template #default="{ row }">
               <span style="font-size:12px;font-family:monospace">{{ formatParams(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="年化%" width="80" sortable prop="ann_return_pct">
+
+          <!-- 得分 -->
+          <el-table-column width="78" sortable prop="calmar">
+            <template #header>
+              <el-tooltip placement="top" :show-after="300" effect="dark">
+                <template #content>
+                  <b>综合得分（寻优排序依据）</b><br/>
+                  排序目标为 Calmar 时：得分 = 年化收益% ÷ 最大回撤%<br/>
+                  排序目标为总收益时：得分 = 年化收益%<br/>
+                  同一标的可横向比较不同策略的得分。<br/>
+                  ⭐ 越高越好，建议以此为主要筛选依据。
+                </template>
+                <span class="col-tip" style="color:#409eff;font-weight:bold">得分</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <span :style="scoreColor(row)" style="font-weight:bold">
+                {{ computeScore(row)?.toFixed(2) ?? '-' }}
+              </span>
+              <div style="font-size:10px;color:#909399">{{ scoreObjectiveLabel(row) }}</div>
+            </template>
+          </el-table-column>
+
+          <!-- 年化收益 -->
+          <el-table-column width="80" sortable prop="ann_return_pct">
+            <template #header>
+              <el-tooltip placement="top" :show-after="300" effect="dark">
+                <template #content>
+                  <b>年化收益率</b><br/>
+                  按 252 交易日/年折算，消除测试区间长短的影响。<br/>
+                  与总收益不同：14年100%总收益 ≈ 年化5%，远低于看起来的直觉值。
+                </template>
+                <span class="col-tip">年化%</span>
+              </el-tooltip>
+            </template>
             <template #default="{ row }">
               <span :class="row.ann_return_pct >= 0 ? 'profit' : 'loss'">
                 {{ row.ann_return_pct != null ? (row.ann_return_pct >= 0 ? '+' : '') + row.ann_return_pct + '%' : '-' }}
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="最大回撤" width="82" sortable prop="max_drawdown">
+
+          <!-- 最大回撤 -->
+          <el-table-column width="82" sortable prop="max_drawdown">
+            <template #header>
+              <el-tooltip placement="top" :show-after="300" effect="dark">
+                <template #content>
+                  <b>最大回撤</b><br/>
+                  样本内持仓净值从最高点到最低点的最大跌幅。<br/>
+                  越小越好。ETF 策略建议控制在 30% 以内；超过 50% 极难坚持执行。
+                </template>
+                <span class="col-tip">最大回撤</span>
+              </el-tooltip>
+            </template>
             <template #default="{ row }">
-              <span style="color:#e6a23c">{{ row.max_drawdown != null ? row.max_drawdown + '%' : '-' }}</span>
+              <span :style="row.max_drawdown > 40 ? 'color:#f56c6c' : 'color:#e6a23c'">
+                {{ row.max_drawdown != null ? row.max_drawdown + '%' : '-' }}
+              </span>
             </template>
           </el-table-column>
-          <el-table-column label="Calmar" width="75" sortable prop="calmar">
-            <template #default="{ row }">{{ row.calmar?.toFixed(2) ?? '-' }}</template>
-          </el-table-column>
-          <el-table-column label="盈亏比" width="72" sortable prop="profit_factor">
+
+          <!-- Calmar -->
+          <el-table-column width="75" sortable prop="calmar">
+            <template #header>
+              <el-tooltip placement="top" :show-after="300" effect="dark">
+                <template #content>
+                  <b>Calmar Ratio = 年化收益% ÷ 最大回撤%</b><br/>
+                  标准风险调整收益指标。<br/>
+                  · ≥ 0.5：良好&nbsp; · ≥ 1.0：优秀&nbsp; · &lt; 0.3：偏弱
+                </template>
+                <span class="col-tip">Calmar</span>
+              </el-tooltip>
+            </template>
             <template #default="{ row }">
-              <span :style="row.profit_factor >= 1.5 ? 'color:#67c23a' : 'color:#e6a23c'">
+              <span :style="row.calmar >= 1 ? 'color:#67c23a' : row.calmar >= 0.5 ? '' : 'color:#e6a23c'">
+                {{ row.calmar?.toFixed(2) ?? '-' }}
+              </span>
+            </template>
+          </el-table-column>
+
+          <!-- 盈亏比 -->
+          <el-table-column width="75" sortable prop="profit_factor">
+            <template #header>
+              <el-tooltip placement="top" :show-after="300" effect="dark">
+                <template #content>
+                  <b>盈亏比（Profit Factor）= 总盈利之和 ÷ 总亏损之和</b><br/>
+                  每亏1元能换回多少元收益。<br/>
+                  · ≥ 2.0：优秀&nbsp; · 1.5–2.0：良好&nbsp; · &lt; 1.5：需改进
+                </template>
+                <span class="col-tip">盈亏比</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <span :style="row.profit_factor >= 2 ? 'color:#67c23a' : row.profit_factor >= 1.5 ? '' : 'color:#e6a23c'">
                 {{ row.profit_factor?.toFixed(2) ?? '-' }}
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="Sortino" width="72" sortable prop="sortino">
-            <template #default="{ row }">{{ row.sortino?.toFixed(2) ?? '-' }}</template>
+
+          <!-- Sortino -->
+          <el-table-column width="72" sortable prop="sortino">
+            <template #header>
+              <el-tooltip placement="top" :show-after="300" effect="dark">
+                <template #content>
+                  <b>Sortino Ratio = 年化收益 ÷ 下行标准差</b><br/>
+                  只惩罚下行波动，比 Sharpe 更适合止损策略。<br/>
+                  · ≥ 1.0：良好&nbsp; · 0.5–1.0：可接受&nbsp; · &lt; 0.5：风险偏高
+                </template>
+                <span class="col-tip">Sortino</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <span :style="row.sortino >= 1 ? 'color:#67c23a' : row.sortino >= 0.5 ? '' : 'color:#e6a23c'">
+                {{ row.sortino?.toFixed(2) ?? '-' }}
+              </span>
+            </template>
           </el-table-column>
-          <el-table-column label="区间" min-width="130" show-overflow-tooltip>
+
+          <!-- Whipsaw -->
+          <el-table-column width="80" sortable prop="whipsaw_rate_pct">
+            <template #header>
+              <el-tooltip placement="top" :show-after="300" effect="dark">
+                <template #content>
+                  <b>Whipsaw 率</b><br/>
+                  止损出场后价格在 N 日内回到入场价以上的比例。<br/>
+                  即"止损是冤枉的"的比例。<br/>
+                  · &lt; 30%：止损质量好&nbsp; · &gt; 60%：参数过紧，噪声过多
+                </template>
+                <span class="col-tip">Whipsaw</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <span :style="row.whipsaw_rate_pct > 60 ? 'color:#e6a23c' : row.whipsaw_rate_pct != null && row.whipsaw_rate_pct < 30 ? 'color:#67c23a' : ''">
+                {{ row.whipsaw_rate_pct != null ? row.whipsaw_rate_pct + '%' : '-' }}
+              </span>
+            </template>
+          </el-table-column>
+
+          <!-- 连亏 -->
+          <el-table-column width="68" sortable prop="max_consec_loss">
+            <template #header>
+              <el-tooltip placement="top" :show-after="300" effect="dark">
+                <template #content>
+                  <b>最大连续亏损次数</b><br/>
+                  策略历史上最多连续亏损多少笔。<br/>
+                  即使长期盈利，连亏期也需要能坚持执行。超过 5 笔需评估心理承受力。
+                </template>
+                <span class="col-tip">最大连亏</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <span :style="row.max_consec_loss >= 5 ? 'color:#e6a23c' : ''">
+                {{ row.max_consec_loss ?? '-' }}
+              </span>
+            </template>
+          </el-table-column>
+
+          <!-- 恢复期 -->
+          <el-table-column width="78" sortable prop="recovery_days">
+            <template #header>
+              <el-tooltip placement="top" :show-after="300" effect="dark">
+                <template #content>
+                  <b>最大回撤恢复期（交易日）</b><br/>
+                  从最大回撤的底部恢复到前高需要多少交易日。<br/>
+                  超过 2 年（504日）意味着极长的"水下"体验。
+                </template>
+                <span class="col-tip">恢复期(日)</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <el-tooltip v-if="row.recovery_days" :content="`约 ${(row.recovery_days/21).toFixed(1)} 个月`" placement="top">
+                <span :style="row.recovery_days > 504 ? 'color:#e6a23c' : ''">
+                  {{ row.recovery_days ?? '-' }}
+                </span>
+              </el-tooltip>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+
+          <!-- 测试区间 -->
+          <el-table-column min-width="130" show-overflow-tooltip>
+            <template #header>
+              <el-tooltip placement="top" :show-after="300" effect="dark">
+                <template #content>
+                  <b>测试区间</b><br/>
+                  样本内寻优区间（含 OOS 标注说明有样本外验证）。<br/>
+                  区间越长、含 OOS 验证的结果更可信。
+                </template>
+                <span class="col-tip">区间</span>
+              </el-tooltip>
+            </template>
             <template #default="{ row }">
               <span style="font-size:11px">
                 {{ row.train_start?.slice(0,7) }} ~ {{ row.train_end?.slice(0,7) }}
@@ -568,7 +760,27 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="备注" min-width="120">
+
+          <!-- B&H -->
+          <el-table-column width="72" sortable prop="bh_return">
+            <template #header>
+              <el-tooltip placement="top" :show-after="300" effect="dark">
+                <template #content>
+                  <b>同期 B&H 总收益</b><br/>
+                  在相同区间内买入持有不做任何操作的总收益。<br/>
+                  参考基准：策略年化 > B&H 年化才有意义。
+                </template>
+                <span class="col-tip">B&H%</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <span style="color:#909399">{{ row.bh_return != null ? row.bh_return + '%' : '-' }}</span>
+            </template>
+          </el-table-column>
+
+          <!-- 备注 -->
+          <el-table-column min-width="120">
+            <template #header>备注</template>
             <template #default="{ row }">
               <el-input
                 v-model="row.notes"
@@ -579,7 +791,10 @@
               />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="70" fixed="right">
+
+          <!-- 操作 -->
+          <el-table-column width="70" fixed="right">
+            <template #header>操作</template>
             <template #default="{ row }">
               <el-button type="danger" size="small" @click="deleteRecord(row)">删除</el-button>
             </template>
@@ -707,6 +922,27 @@ const deleteRecord = async (row) => {
   } catch (e) {
     if (e !== 'cancel') ElMessage.error('删除失败')
   }
+}
+
+// 得分计算（基于 objective 重建）
+const computeScore = (row) => {
+  if (!row) return null
+  const obj = row.objective || 'calmar'
+  if (obj === 'calmar' || !obj) return row.calmar
+  if (obj === 'total_return') return row.ann_return_pct
+  return row.calmar   // capture / dd_reduction 回退到 calmar
+}
+const scoreObjectiveLabel = (row) => {
+  const map = { calmar: 'Calmar', total_return: '年化%', capture: '捕获率', dd_reduction: '回撤削减' }
+  return map[row.objective] || 'Calmar'
+}
+const scoreColor = (row) => {
+  const s = computeScore(row)
+  if (s == null) return ''
+  const obj = row.objective || 'calmar'
+  if (obj === 'calmar') return s >= 1 ? 'color:#67c23a' : s >= 0.5 ? 'color:#409eff' : 'color:#e6a23c'
+  if (obj === 'total_return') return s >= 10 ? 'color:#67c23a' : s >= 5 ? 'color:#409eff' : 'color:#e6a23c'
+  return ''
 }
 
 const exitModeLabel = (mode) => {
