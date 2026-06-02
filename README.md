@@ -4,307 +4,185 @@
 
 | 版本 | 日期 | 变更说明 |
 |------|------|----------|
-| v1.4 | 2026-05-31 | PE估值分析、回测模块、统计重构、数据库清理 |
-| v1.3 | 2026-05-28 | 新增配置管理模块，数据库迁移支持，持仓统计优化 |
-| v1.2 | 2026-05-24 | 功能优化：改进持仓统计、数据分析逻辑，优化前端UI交互 |
-| v1.1 | 2026-05-14 | 清理仓库：移除构建产物、缓存文件和临时测试文件 |
-| v1.0 | 2026-05-09 | 初始版本，完成基础功能设计 |
+| v1.5 | 2026-06-02 | 策略参数寻优回测模块、历史记录、死代码清理 |
+| v1.4 | 2026-05-31 | PE估值分析、统计重构、数据库清理 |
+| v1.3 | 2026-05-28 | 配置管理模块、数据库迁移支持 |
+| v1.2 | 2026-05-24 | 持仓统计优化、数据分析逻辑改进 |
+| v1.1 | 2026-05-14 | 仓库清理 |
+| v1.0 | 2026-05-09 | 初始版本 |
 
 ## 项目概述
 
-个人投资追踪可视化平台，支持A股、场内基金(ETF)、联接基金的投资记录、持仓管理、收益统计，以及历史行情数据分析。
+个人投资追踪可视化平台，支持 A股、ETF、联接基金的投资记录、持仓管理、收益统计，以及历史行情分析和策略参数寻优。
 
 ## 技术栈
 
 ### 后端 (Python)
-- **FastAPI** - Web框架
-- **SQLAlchemy** - ORM
-- **SQLite** - 数据库
-- **akshare** - A股/ETF/基金行情数据
-- **APScheduler** - 定时任务（每日收盘后拉取行情）
-- **uvicorn** - ASGI服务器
-- **numpy/pandas** - 数据分析
+- **FastAPI** — Web 框架
+- **SQLAlchemy** — ORM
+- **SQLite** — 数据库
+- **akshare** — A股/ETF/基金行情数据
+- **APScheduler** — 定时任务（每日收盘后拉取行情）
+- **uvicorn** — ASGI 服务器
+- **numpy** — 策略回测数值计算
 
 ### 前端 (Vue 3)
-- **Vue 3** + **Vite** - 前端框架+构建
-- **Element Plus** - UI组件库
-- **ECharts** - 图表（K线、折线、饼图、热力图）
-- 打包后由FastAPI静态文件托管，单进程运行
+- **Vue 3 + Vite** — 前端框架 + 构建
+- **Element Plus** — UI 组件库
+- **ECharts** — 图表（K线、折线、热力图）
+- 打包后由 FastAPI 静态文件托管，单端口 (8000) 运行
+
+---
 
 ## 核心功能
 
-### 1. 交易管理
-- 录入买卖交易：股票/ETF代码、方向(买/卖/分红)、价格、金额、日期
+### 1. 交易管理（/trades）
+- 录入买卖交易：代码、方向（买/卖/分红）、价格、金额、日期
 - 支持联接基金交易记录
 - 自动检测并确认分红再投资
 - 交易列表筛选（代码、方向、日期范围）
 
-### 2. 持仓管理
+### 2. 持仓管理（/）
 - 实时持仓总览：总市值、总成本、总收益、收益率
-- 每日盈亏计算（基于T-1收盘价）
-- 持仓分类标签管理
-- 关联场内ETF（用于联接基金跟踪）
+- 每日盈亏（基于 T-1 收盘价）
+- 持仓分类标签管理、关联场内 ETF
 - 已清仓标的归档查看
 
-### 3. 持仓详情
-- 价格走势图（日K线/折线图）：净值/趋势/对比/PE 四种模式
-- 买卖点标记（绿色▲买入/红色▼卖出）
-- PE 估值走势图（需配置 benchmark_index）
-- 细分统计：平均成本、最高最低价、持仓天数
-- 关联ETF对比（联接基金vs场内ETF）
+### 3. 持仓详情（/position/:code）
+- 价格走势图：净值 / 趋势 / 对比 / PE 四种模式
+- 买卖点标记、止盈/损线展示
+- PE 估值走势图（需配置关联指数）
+- 关联 ETF 对比
 
-### 4. 收益统计
-- 月度收益表：每月盈亏金额、收益率（已实现+浮动盈亏）
-- 年度收益汇总
-- 收益曲线图（按月/按年）
+### 4. 收益统计（/stats）
+- 月度/年度收益汇总（已实现 + 浮动盈亏）
+- 收益曲线图
 - 月度/年度持仓收益明细
 
-### 7. 回测（新增）
-- 持仓标的历史区间回测
-- 买入持有、定投等策略对比
+### 5. 行情同步（/analysis → 数据缓存 Tab）
+- APScheduler 每日 15:30 自动拉取收盘价
+- 手动触发：L1宽基/L2行业/L3主题/L6大宗商品批量同步
+- 增量补全缺失数据
+- 分红检测与确认
 
-### 5. 行情同步
-- 自动同步：APScheduler每日15:30拉取收盘价
-- 手动同步：支持后台任务进度查询
-- 增量补全：自动检测缺失数据并补全
-- 分红检测：自动识别持仓分红记录
+### 6. 历史行情分析（/analysis）
+行情页包含四个 Tab：
+- **数据缓存**：管理各层级行情数据的同步与状态
+- **数据查看**：K线图浏览（支持资产类型筛选）
+- **主题指数**：持仓关联中证/恒生系列指数走势 + PE/股息率趋势
+- **大宗商品**：国际/国内大宗商品价格走势
 
-### 6. 历史行情分析（新增）
-支持多层级资产数据缓存和分析：
+### 7. 策略参数寻优（/backtest）— v1.5 新增
 
-#### 数据层级
-- **L1 大盘指数**：沪深300、中证500等宽基指数
-- **L2 行业板块**：申万/同花顺行业分类
-- **L3 概念板块**：热门概念追踪
-- **L6 大宗商品**：黄金、原油、白银等国际商品
+#### 退出策略（5 种）
+| 模式 | 关键参数 | 适用场景 |
+|---|---|---|
+| 固定止盈止损 (simple) | stop_loss + take_profit | 简单基准策略 |
+| 移动止损 Pmax (pmax_drawdown) | stop_loss + pmax_drawdown | 趋势跟踪、锁住利润 |
+| 浮盈保留 (profit_retention) | stop_loss + trigger + retention | 两阶段保护，激活后保留浮盈比例 |
+| 成本保护 (cost_protection) | stop_loss + trigger + floor | 两阶段保护，激活后拉高止损至成本线 |
+| MA 均线穿越 (ma_cross) | stop_loss + ma_period | 趋势跟踪，价格跌破均线出场 |
 
-#### 分析功能
-- **相关性分析**：皮尔逊相关系数、相关系数矩阵、滚动窗口相关
-- **领先滞后**：交叉相关函数(CCF)、Granger因果检验
-- **特征挖掘**：月度季节效应、周几效应、动量反转、均值回归
-- **聚类分析**：多标的层次聚类
-- **快速诊断**：单标的综合报告、两两关系报告
+#### 通用参数
+- `stop_loss_pct`：兜底止损（所有模式）
+- `reentry_cooldown`：出场后冷静期（所有模式）
+- `reentry_pullback_pct`：回撤入场阈值（可选，非 MA 模式，默认关闭）
+- `ma_entry_period`：MA 入场过滤（可选，MA 模式自动开启）
 
-## 数据库设计
+#### 网格搜索
+- 对参数笛卡尔积扫描（无组合数上限）
+- 5-cohort 中位数评估，避免单一入场点偏差
+- 样本内寻优 + 可选样本外（OOS）验证
+- 支持热力图（2维扫描时）
 
-### 核心表
+#### 评分指标
+- **得分（Calmar）= 年化收益% ÷ 最大回撤%**（主评分，消除测试区间偏差）
+- Profit Factor = 总盈利 ÷ 总亏损
+- Sortino Ratio = 年化收益 ÷ 下行标准差
+- Whipsaw 率 = 止损后价格回到入场价以上的比例（以入场价为基准）
+- 最大连续亏损次数、回撤恢复期
 
-#### trades 交易记录表
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INTEGER PK | 主键 |
-| code | TEXT | 标的代码 |
-| name | TEXT | 标的名称 |
-| direction | TEXT | buy/sell/dividend |
-| price | REAL | 成交价格 |
-| amount | REAL | 总金额 |
-| quantity | REAL | 数量 |
-| trade_date | DATE | 交易日期 |
-| fee | REAL | 手续费 |
-| created_at | DATETIME | 创建时间 |
+#### 历史记录
+- 每次寻优完成后自动保存最优解（BacktestRecord 表）
+- 历史 Tab 按标的筛选，支持点击「查看」恢复完整展示
+- 所有列含 Tooltip 指标说明
 
-#### positions 持仓表
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INTEGER PK | 主键 |
-| code | TEXT | 标的代码（唯一） |
-| name | TEXT | 名称 |
-| category | TEXT | 分类标签 |
-| linked_code | TEXT | 关联场内ETF代码 |
-| linked_name | TEXT | 关联ETF名称 |
-| benchmark_index | TEXT | 关联指数代码（用于PE查询） |
-| total_cost | REAL | 总成本 |
-| quantity | REAL | 持有数量 |
-| avg_cost | REAL | 平均成本 |
-| current_price | REAL | 最新价格 |
-| is_closed | INTEGER | 0=持仓,1=清仓 |
+---
 
-#### daily_snapshots 每日快照表
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INTEGER PK | 主键 |
-| code | TEXT | 标的代码 |
-| date | DATE | 日期 |
-| open/high/low/close | REAL | OHLC价格 |
-| market_value | REAL | 持仓市值 |
-| daily_pnl | REAL | 当日盈亏 |
-| total_pnl | REAL | 累计盈亏 |
+## 数据库表
 
-### 分析相关表
+| 表名 | 说明 |
+|---|---|
+| `trades` | 交易记录 |
+| `positions` | 持仓（含清仓归档） |
+| `hist_quotes_cache` | 历史行情缓存（OHLCV） |
+| `asset_meta` | 行情资产元数据 |
+| `index_pe_history` | 指数 PE/股息率历史 |
+| `profit_level_config` | 利润等级配置 |
+| `stop_loss_config` | 止盈/损线配置 |
+| `backtest_record` | 回测历史记录（v1.5 新增） |
 
-#### asset_meta 资产元数据表
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| code | TEXT PK | 资产代码 |
-| name | TEXT | 名称 |
-| asset_type | TEXT | 类型(index/etf/stock/sector_*) |
-| category | TEXT | 细分分类 |
-| source | TEXT | 数据来源 |
-| is_cached | INTEGER | 是否已缓存历史数据 |
-
-#### hist_quotes_cache 历史行情缓存表
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INTEGER PK | 主键 |
-| code | TEXT | 标的代码 |
-| date | DATE | 日期 |
-| open/high/low/close | REAL | OHLC |
-| volume | REAL | 成交量 |
-| turnover | REAL | 成交额 |
-| pct_change | REAL | 涨跌幅% |
-
-#### index_pe_history 指数PE历史表
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INTEGER PK | 主键 |
-| code | TEXT | 指数代码 |
-| date | DATE | 日期 |
-| pe1 / pe2 | REAL | 市盈率（中证指数提供） |
-| dividend_yield1/2 | REAL | 股息率 |
-| source | TEXT | 数据来源（csindex） |
+---
 
 ## API 概览
 
-### 交易管理 `/api/trades`
-- `POST /` - 新增交易
-- `GET /` - 交易列表（支持筛选）
-- `PUT /{id}` - 编辑交易
-- `DELETE /{id}` - 删除交易
+### 交易 `/api/trades`
+`GET / POST / PUT /{id} / DELETE /{id}`
 
-### 持仓管理 `/api/positions`
-- `GET /` - 持仓列表
-- `GET /{code}` - 持仓详情
-- `GET /{code}/chart` - 走势图数据
-- `PUT /{code}/category` - 更新分类
-- `PUT /{code}/linked` - 更新关联ETF
+### 持仓 `/api/positions`
+`GET / /{code} /{code}/chart /{code}/suggest-linked`
+`PATCH /{code}/category /{code}/linked-code`
+`GET /categories/stats /closed-positions`
 
-### 行情同步 `/api/quotes`
-- `POST /sync` - 手动触发同步（后台任务）
-- `GET /sync-progress/{task_id}` - 查询同步进度
-- `GET /validate/{code}` - 校验代码有效性
-- `GET /fund-info/{code}` - 获取联接基金信息
-- `GET /dividends` - 检测分红记录
-- `POST /dividends/confirm` - 确认分红再投资
-- `GET /last-sync` - 上次同步时间
-- `GET /pe/{etf_code}` - 获取ETF关联指数PE历史
-- `GET /pe/index/{index_code}` - 直接查询指数PE历史
+### 行情 `/api/quotes`
+`POST /sync` · `GET /sync-progress/{taskId} /last-sync /validate/{code}`
+`GET /fund-info/{code} /dividends /pe/{code} /pe/index/{code}`
+`POST /dividends/confirm`
 
-### 收益统计 `/api/stats`
-- `GET /monthly` - 月度统计
-- `GET /yearly` - 年度统计
-- `GET /monthly/{year}/{month}/positions` - 月度持仓明细
-- `GET /yearly/{year}/positions` - 年度持仓明细
+### 统计 `/api/stats`
+`GET /monthly /yearly /monthly/{y}/{m}/positions /yearly/{y}/positions`
 
 ### 历史行情分析 `/api/analysis`
+**数据缓存**：`POST /cache/sync /cache/sync-batch /cache/sync-l1 /cache/sync-l2 /cache/sync-l3-theme /cache/sync-l6 /cache/sync-l6c`
+`GET /cache/status /cache/progress`
 
-#### 数据缓存
-- `POST /cache/sync` - 同步单个标的
-- `POST /cache/sync-batch` - 批量同步
-- `POST /cache/sync-l1` - 同步大盘指数
-- `POST /cache/sync-l2` - 同步行业板块
-- `POST /cache/sync-l3` - 同步概念板块
-- `POST /cache/sync-l6` - 同步大宗商品
-- `GET /cache/status` - 缓存概况
-- `GET /cache/progress` - 同步进度
+**数据查看**：`GET /data/ohlcv /data/stats`
 
-#### 相关性分析
-- `POST /correlation/pearson` - 皮尔逊相关系数
-- `POST /correlation/matrix` - 相关系数矩阵
-- `POST /correlation/rolling` - 滚动窗口相关
-- `POST /correlation/ccf` - 交叉相关函数
-- `POST /correlation/granger` - Granger因果检验
+**策略参数寻优**：`POST /backtest/grid-search`
 
-#### 特征规律
-- `POST /pattern/seasonality-monthly` - 月度季节效应
-- `POST /pattern/seasonality-weekday` - 周几效应
-- `POST /pattern/momentum-reversal` - 动量反转
-- `POST /pattern/mean-reversion` - 均值回归
-- `POST /pattern/clustering` - 层次聚类
+### 回测历史 `/api/backtest-records`
+`GET / /codes` · `POST /` · `PATCH /{id}/notes` · `DELETE /{id}`
 
-#### 数据查看
-- `GET /data/ohlcv` - K线数据
-- `GET /data/distribution` - 数据分布
-- `GET /data/volume-analysis` - 成交量分析
-- `GET /data/stats` - 基础统计
+### 系统配置 `/api/config`
+`GET/PUT /profit-levels /stop-loss`
 
-#### 报告
-- `POST /report/quick` - 单标的快速诊断
-- `POST /report/pair` - 两两关系报告
+---
 
-## 项目结构
+## 开发说明
 
-```
-invest-tracker/
-├── backend/
-│   ├── main.py                 # FastAPI入口
-│   ├── database.py             # 数据库连接
-│   ├── models.py               # SQLAlchemy模型
-│   ├── schemas.py              # Pydantic模型
-│   ├── scheduler.py            # 定时任务配置
-│   ├── migrations/             # 数据库迁移脚本
-│   ├── routers/
-│   │   ├── trades.py           # 交易API
-│   │   ├── positions.py        # 持仓API
-│   │   ├── quotes.py           # 行情同步+PE API
-│   │   ├── stats.py            # 统计API
-│   │   ├── analysis.py         # 历史行情分析API
-│   │   └── config.py           # 配置管理API
-│   └── services/
-│       ├── market.py           # 行情数据获取
-│       ├── tracker.py          # 持仓计算
-│       ├── stats.py            # 统计分析
-│       └── analysis/           # 分析模块
-│           ├── data_fetcher.py # 数据获取与缓存
-│           ├── backtest.py     # 回测服务
-│           ├── correlation.py  # 相关性分析
-│           ├── pattern.py      # 特征规律挖掘
-│           └── report.py       # 报告生成
-├── frontend/
-│   └── src/
-│       ├── components/         # 可复用组件
-│       │   ├── PeriodListCard.vue   # 收益期列表卡片
-│       │   └── PeriodDetailPanel.vue # 期内明细面板
-│       ├── views/              # 页面组件
-│       │   ├── Overview.vue    # 总览
-│       │   ├── Trades.vue      # 交易记录
-│       │   ├── PositionDetail.vue # 持仓详情（含PE模式）
-│       │   ├── Stats.vue       # 收益统计
-│       │   ├── Analysis.vue    # 历史行情分析
-│       │   ├── Backtest.vue    # 回测
-│       │   └── Config.vue      # 配置管理
-│       └── api/index.js        # API封装
-├── tests/                      # 测试文件
-└── README.md                   # 项目文档
-```
-
-## 部署方式
-
-1. 安装依赖
+### 启动方式
 ```bash
-cd backend && pip install -r requirements.txt
-cd ../frontend && npm install
+cd backend
+python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-2. 构建前端
+### 前端构建（修改后必须执行）
 ```bash
-cd frontend && npm run build
+cd frontend
+npm run build
+# 产物自动输出到 backend/static/
 ```
 
-3. 启动服务
+### 后端重启（改后端代码后执行）
 ```bash
-cd backend && uvicorn main:app --host 0.0.0.0 --port 8000
+lsof -ti:8000 | xargs kill -9 2>/dev/null; sleep 1
+find backend -name "*.pyc" -delete
+find backend -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
+cd backend && nohup python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload > /tmp/uvicorn.log 2>&1 &
+sleep 4 && curl -s http://localhost:8000/api/analysis/cache/status | python3 -c "import sys,json; print('OK')"
 ```
 
-4. 访问
-```
-http://localhost:8000
-```
-
-## 注意事项
-
-- akshare获取行情时注意频率限制，已内置延时控制
-- ETF代码格式：510300（沪市ETF），159919（深市ETF）
-- 股票代码格式：600519（沪市），000001（深市）
-- 联接基金代码格式：160119（场外基金）
-- 日期格式统一用 YYYY-MM-DD
-- 数据库文件较大，已加入.gitignore不提交到仓库
+### 数据约束（红线）
+- **禁止直接删除数据库**，必须备份 → 迁移
+- **清仓用软删除**（is_closed=1），禁止物理删除
+- **行情数据必须先同步到 HistQuotesCache**，不允许前端实时调 akshare
