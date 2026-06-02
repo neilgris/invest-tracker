@@ -71,3 +71,10 @@ export const analysisDataStats = (code) => api.get('/analysis/data/stats', { par
 
 // --- 参数寻优 ---
 export const analysisGridSearch = (data) => syncApi.post('/analysis/backtest/grid-search', data)
+
+// --- 回测历史记录 ---
+export const saveBacktestRecord = (data) => api.post('/backtest-records', data)
+export const listBacktestRecords = (code) => api.get('/backtest-records', { params: code ? { code } : {} })
+export const listBacktestCodes = () => api.get('/backtest-records/codes')
+export const updateBacktestNotes = (id, notes) => api.patch(`/backtest-records/${id}/notes`, { notes })
+export const deleteBacktestRecord = (id) => api.delete(`/backtest-records/${id}`)

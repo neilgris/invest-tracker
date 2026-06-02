@@ -1,5 +1,9 @@
 <template>
   <div>
+    <el-tabs v-model="activeTab" type="border-card">
+
+      <!-- ── Tab 1: 参数寻优 ─────────────────────────── -->
+      <el-tab-pane label="参数寻优" name="search">
     <el-row :gutter="20">
       <!-- 左侧：网格定义 -->
       <el-col :span="8">
@@ -102,7 +106,20 @@
           <!-- 最优结果横幅 -->
           <el-alert type="success" :closable="false" show-icon style="margin-bottom:14px">
             <template #title>
-              最优组合（按{{ gridObjectiveLabel }}）：{{ gridBestParamsText }}
+              <div style="display:flex;justify-content:space-between;align-items:center;width:100%">
+                <span>最优组合（按{{ gridObjectiveLabel }}）：{{ gridBestParamsText }}</span>
+                <el-button
+                  size="small"
+                  :type="recordSaved ? 'default' : 'primary'"
+                  :icon="recordSaved ? 'Check' : ''"
+                  :loading="savingRecord"
+                  :disabled="recordSaved"
+                  @click="saveCurrentRecord"
+                  style="margin-left:12px;flex-shrink:0"
+                >
+                  {{ recordSaved ? '已保存' : '保存记录' }}
+                </el-button>
+              </div>
             </template>
             <!-- 一行核心指标 -->
             <el-tooltip effect="dark" placement="bottom" :show-after="200">
@@ -460,14 +477,129 @@
         </template>
       </el-col>
     </el-row>
+      </el-tab-pane>
+
+      <!-- ── Tab 2: 历史记录 ─────────────────────────── -->
+      <el-tab-pane label="历史记录" name="history">
+        <el-row style="margin-bottom:14px" :gutter="12" align="middle">
+          <el-col :span="6">
+            <el-select
+              v-model="historyCode"
+              clearable
+              placeholder="按标的筛选（全部）"
+              style="width:100%"
+              @change="loadHistory"
+            >
+              <el-option
+                v-for="c in historyCodes"
+                :key="c.code"
+                :label="`${c.name || c.code}（${c.code}）`"
+                :value="c.code"
+              />
+            </el-select>
+          </el-col>
+          <el-col :span="2">
+            <el-button @click="loadHistory" :loading="historyLoading">刷新</el-button>
+          </el-col>
+          <el-col :span="16" style="text-align:right;color:#909399;font-size:13px">
+            共 {{ historyRecords.length }} 条记录
+          </el-col>
+        </el-row>
+
+        <el-table
+          :data="historyRecords"
+          v-loading="historyLoading"
+          border
+          size="small"
+          row-key="id"
+          :default-sort="{ prop: 'created_at', order: 'descending' }"
+        >
+          <el-table-column prop="created_at" label="时间" width="150" sortable>
+            <template #default="{ row }">
+              <span style="font-size:12px">{{ row.created_at?.slice(0,16).replace('T',' ') }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="标的" width="130">
+            <template #default="{ row }">
+              <div style="font-weight:bold">{{ row.asset_name || row.code }}</div>
+              <div style="color:#909399;font-size:11px">{{ row.code }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="模式" width="105">
+            <template #default="{ row }">
+              <el-tag size="small" :type="exitModeTagType(row.exit_mode)">{{ exitModeLabel(row.exit_mode) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="最优参数" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span style="font-size:12px;font-family:monospace">{{ formatParams(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="年化%" width="80" sortable prop="ann_return_pct">
+            <template #default="{ row }">
+              <span :class="row.ann_return_pct >= 0 ? 'profit' : 'loss'">
+                {{ row.ann_return_pct != null ? (row.ann_return_pct >= 0 ? '+' : '') + row.ann_return_pct + '%' : '-' }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="最大回撤" width="82" sortable prop="max_drawdown">
+            <template #default="{ row }">
+              <span style="color:#e6a23c">{{ row.max_drawdown != null ? row.max_drawdown + '%' : '-' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="Calmar" width="75" sortable prop="calmar">
+            <template #default="{ row }">{{ row.calmar?.toFixed(2) ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column label="盈亏比" width="72" sortable prop="profit_factor">
+            <template #default="{ row }">
+              <span :style="row.profit_factor >= 1.5 ? 'color:#67c23a' : 'color:#e6a23c'">
+                {{ row.profit_factor?.toFixed(2) ?? '-' }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="Sortino" width="72" sortable prop="sortino">
+            <template #default="{ row }">{{ row.sortino?.toFixed(2) ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column label="区间" min-width="130" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span style="font-size:11px">
+                {{ row.train_start?.slice(0,7) }} ~ {{ row.train_end?.slice(0,7) }}
+                <el-tag v-if="row.oos_start" size="small" type="danger" style="margin-left:4px">含OOS</el-tag>
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="备注" min-width="120">
+            <template #default="{ row }">
+              <el-input
+                v-model="row.notes"
+                size="small"
+                placeholder="添加备注..."
+                @blur="saveNotes(row)"
+                @keyup.enter="saveNotes(row)"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="70" fixed="right">
+            <template #default="{ row }">
+              <el-button type="danger" size="small" @click="deleteRecord(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
+    </el-tabs>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import VChart from 'vue-echarts'
-import { analysisCacheStatus, analysisGridSearch } from '../api'
+import {
+  analysisCacheStatus, analysisGridSearch,
+  saveBacktestRecord, listBacktestRecords, listBacktestCodes,
+  updateBacktestNotes, deleteBacktestRecord
+} from '../api'
 
 // ── 排序目标说明 ──────────────────────────────────────
 const OBJECTIVE_DESC = {
@@ -530,11 +662,65 @@ const PARAM_DESC = {
 }
 
 // ── 状态 ─────────────────────────────────────────────
+const activeTab = ref('search')
+
 const loading = ref(false)
 const loadingAssets = ref(false)
 const cacheAssets = ref([])
 const gridResult = ref(null)
 const gridBestChartView = ref('trade')
+
+// ── 历史记录 ──────────────────────────────────────────
+const historyLoading  = ref(false)
+const historyRecords  = ref([])
+const historyCodes    = ref([])
+const historyCode     = ref('')
+
+const loadHistory = async () => {
+  historyLoading.value = true
+  try {
+    const [recs, codes] = await Promise.all([
+      listBacktestRecords(historyCode.value || undefined),
+      listBacktestCodes(),
+    ])
+    historyRecords.value = recs.data
+    historyCodes.value   = codes.data
+  } catch (e) {
+    ElMessage.error('加载历史记录失败: ' + e.message)
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+const saveNotes = async (row) => {
+  try {
+    await updateBacktestNotes(row.id, row.notes)
+  } catch (e) { /* 静默 */ }
+}
+
+const deleteRecord = async (row) => {
+  try {
+    await ElMessageBox.confirm(`确定删除「${row.asset_name || row.code}」的这条记录？`, '确认删除', { type: 'warning' })
+    await deleteBacktestRecord(row.id)
+    ElMessage.success('已删除')
+    loadHistory()
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('删除失败')
+  }
+}
+
+const exitModeLabel = (mode) => {
+  const map = { simple: '固定止盈止损', pmax_drawdown: 'Pmax移动止损', profit_retention: '浮盈保留', cost_protection: '成本保护', ma_cross: 'MA穿越' }
+  return map[mode] || mode
+}
+const exitModeTagType = (mode) => {
+  const map = { simple: '', pmax_drawdown: 'warning', profit_retention: 'success', cost_protection: 'info', ma_cross: 'danger' }
+  return map[mode] || ''
+}
+const formatParams = (row) => {
+  if (!row.best_params || !row.sweep_params?.length) return '-'
+  return row.sweep_params.map(k => `${k}=${row.best_params[k]}`).join('  ')
+}
 
 // ── 参数元数据 ────────────────────────────────────────
 const GRID_PARAM_META = {
@@ -618,6 +804,54 @@ const loadCacheAssets = async () => {
   }
 }
 
+// ── 保存记录 ──────────────────────────────────────────
+const recordSaved  = ref(false)
+const savingRecord = ref(false)
+
+const saveCurrentRecord = async () => {
+  if (!gridResult.value || savingRecord.value) return
+  savingRecord.value = true
+  try {
+    const d = gridResult.value
+    const b = d.best
+    const asset = cacheAssets.value.find(a => a.code === gridForm.value.code)
+    const calmar = b.max_drawdown > 0 ? +(b.ann_return_pct / b.max_drawdown).toFixed(3) : 0
+    await saveBacktestRecord({
+      code:           gridForm.value.code,
+      asset_name:     asset?.name || gridForm.value.code,
+      exit_mode:      d.exit_mode,
+      objective:      gridForm.value.objective,
+      best_params:    b.params || {},
+      sweep_params:   d.sweep_params || [],
+      train_start:    d.train_period?.start,
+      train_end:      d.train_period?.end,
+      train_days:     d.train_period?.days,
+      oos_start:      d.test_period?.start,
+      oos_end:        d.test_period?.end,
+      ann_return_pct: b.ann_return_pct,
+      max_drawdown:   b.max_drawdown,
+      calmar:         calmar,
+      profit_factor:  b.profit_factor,
+      sortino:        b.sortino,
+      win_rate:       null,
+      whipsaw_rate_pct: b.whipsaw_rate_pct,
+      max_consec_loss:  b.max_consec_loss,
+      recovery_days:    b.recovery_days,
+      avg_win:          b.avg_win,
+      avg_loss:         b.avg_loss,
+      total_combos:     d.total_combos,
+      bh_return:        d.benchmark_total_return_pct,
+    })
+    recordSaved.value = true
+    ElMessage.success('已保存到历史记录')
+    listBacktestCodes().then(r => { historyCodes.value = r.data })  // 刷新标的列表
+  } catch (e) {
+    ElMessage.error('保存失败: ' + e.message)
+  } finally {
+    savingRecord.value = false
+  }
+}
+
 const runGridSearch = async () => {
   if (!gridForm.value.code) return ElMessage.warning('请选择标的')
   loading.value = true
@@ -638,6 +872,7 @@ const runGridSearch = async () => {
     if (!res.data.ok) return ElMessage.error(res.data.message || '寻优失败')
     gridResult.value = res.data
     gridBestChartView.value = 'trade'
+    recordSaved.value = false   // 新结果出来后重置保存状态
   } catch (e) {
     ElMessage.error('寻优失败: ' + (e.response?.data?.detail || e.message))
   } finally {
@@ -887,7 +1122,14 @@ watch(() => gridForm.value.code, (code) => {
   gridForm.value.train_end = new Date(t0 + (t1 - t0) * 2 / 3).toISOString().split('T')[0]
 })
 
-onMounted(loadCacheAssets)
+onMounted(() => {
+  loadCacheAssets()
+  loadHistory()
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'history') loadHistory()
+})
 </script>
 
 <style scoped>

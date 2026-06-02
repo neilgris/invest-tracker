@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from database import init_db
 from scheduler import start_scheduler
-from routers import trades, positions, quotes, stats, analysis, config
+from routers import trades, positions, quotes, stats, analysis, config, backtest_record
 
 app = FastAPI(title="Invest Tracker", description="投资追踪平台")
 
@@ -21,6 +21,7 @@ app.include_router(quotes.router)
 app.include_router(stats.router)
 app.include_router(analysis.router)
 app.include_router(config.router)
+app.include_router(backtest_record.router)
 
 # 静态文件（前端）
 STATIC_DIR = Path(__file__).parent / "static"

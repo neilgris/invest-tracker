@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Index
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Index, Text
 from database import Base
 from datetime import datetime
 
@@ -148,3 +148,43 @@ class IndexPEHistory(Base):
     dividend_yield2 = Column(Float, nullable=True)  # 股息率2
     source = Column(String(20), default='csindex')  # 数据来源：csindex=中证指数
     created_at = Column(DateTime, default=datetime.now)
+
+
+class BacktestRecord(Base):
+    """回测历史记录：保存每次参数寻优的最优结果"""
+    __tablename__ = "backtest_record"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    code          = Column(String(20), nullable=False, index=True)
+    asset_name    = Column(String(100), nullable=True)   # 标的名称（冗余存储便于展示）
+
+    # 策略配置
+    exit_mode     = Column(String(20), nullable=False)
+    objective     = Column(String(20), default='calmar')
+    best_params   = Column(Text, nullable=False)         # JSON：最优参数组合
+    sweep_params  = Column(Text, nullable=True)          # JSON：被扫描的参数名列表
+
+    # 测试区间
+    train_start   = Column(String(10), nullable=True)
+    train_end     = Column(String(10), nullable=True)
+    train_days    = Column(Integer,    nullable=True)
+    oos_start     = Column(String(10), nullable=True)
+    oos_end       = Column(String(10), nullable=True)
+
+    # 核心指标（样本内）
+    ann_return_pct   = Column(Float, nullable=True)
+    max_drawdown     = Column(Float, nullable=True)
+    calmar           = Column(Float, nullable=True)
+    profit_factor    = Column(Float, nullable=True)
+    sortino          = Column(Float, nullable=True)
+    win_rate         = Column(Float, nullable=True)
+    whipsaw_rate_pct = Column(Float, nullable=True)
+    max_consec_loss  = Column(Integer, nullable=True)
+    recovery_days    = Column(Integer, nullable=True)
+    avg_win          = Column(Float, nullable=True)
+    avg_loss         = Column(Float, nullable=True)
+    total_combos     = Column(Integer, nullable=True)
+    bh_return        = Column(Float, nullable=True)      # B&H 同期收益
+
+    notes         = Column(Text, nullable=True)          # 用户备注
+    created_at    = Column(DateTime, default=datetime.now)
