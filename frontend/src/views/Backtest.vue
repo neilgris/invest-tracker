@@ -246,9 +246,7 @@
                     <span style="color:#f56c6c">●</span>&nbsp;盈利退出&nbsp;
                     <span style="color:#e6a23c">▼</span>&nbsp;亏损退出&nbsp;
                     <span style="color:#909399">■</span>&nbsp;时间止损&nbsp;
-                    <span style="color:#409eff">◆</span>&nbsp;持有中&nbsp;&nbsp;
-                    <span style="background:rgba(245,108,108,0.20);padding:0 4px;border-radius:2px">盈利持仓</span>&nbsp;
-                    <span style="background:rgba(103,194,58,0.20);padding:0 4px;border-radius:2px">亏损持仓</span>
+                    <span style="color:#409eff">◆</span>&nbsp;持有中
                   </template>
                   <template v-else-if="gridBestChartView === 'curve'">
                     <span style="color:#409eff">━</span>&nbsp;策略净值&nbsp;
@@ -1230,15 +1228,6 @@ const gridBestTradeOption = computed(() => {
   const dateIdx = Object.fromEntries(dates.map((d, i) => [d, i]))
   const lastDate = dates[dates.length - 1]
 
-  const holdAreas = trades.map(t => {
-    const endD = t.sell_date || lastDate
-    let color
-    if (t.sell_reason === '持有中')  color = 'rgba(64,158,255,0.18)'   // 蓝：持有中
-    else if (t.pct > 0)             color = 'rgba(245,108,108,0.18)'  // 红：盈利（与 profit=#f56c6c 一致）
-    else                            color = 'rgba(103,194,58,0.18)'   // 绿：亏损（与 loss=#67c23a 一致）
-    return [{ xAxis: t.buy_date, itemStyle: { color } }, { xAxis: endD }]
-  })
-
   const markPoints = []
   for (const t of trades) {
     const bi = dateIdx[t.buy_date]
@@ -1327,7 +1316,6 @@ const gridBestTradeOption = computed(() => {
       {
         name: '收盘价', type: 'line', data: closes, symbol: 'none', z: 10,
         lineStyle: { color: '#409EFF', width: 1.5 },
-        markArea:  { silent: true, data: holdAreas },
         markPoint: { data: markPoints, tooltip: { formatter: p => p.name } },
         ...(splitDate ? {
           markLine: {
