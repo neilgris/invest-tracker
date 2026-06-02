@@ -838,7 +838,7 @@ const EXIT_MODE_DESC = {
   },
   ma_cross: {
     title: 'MA 均线穿越（趋势跟踪）',
-    body: '价格跌破 MA(N) 时出场（盈利=止盈，亏损=止损），兜底止损作安全网。\n持仓期间只要价格在 MA 上方就继续持有，跌破即离场，自动跟随趋势。\n建议：MA60（3个月）适合中线，MA120（半年）减少噪声，MA200（年线）趋势信号强。',
+    body: '价格跌破 MA(N) 时出场（盈利=止盈，亏损=止损），兜底止损作安全网。\n持仓期间只要价格在 MA 上方就继续持有，跌破即离场，自动跟随趋势。\n建议：MA60（3个月）适合中线，MA120（半年）减少噪声，MA200（年线）趋势信号强。\n⚡ 再入场：将「MA入场过滤」设为与 MA均线周期相同，可实现"跌破出场、重回才入场"的完整双向穿越策略。',
   },
   pmax_drawdown: {
     title: '移动止损（Trailing Stop）',
@@ -1034,7 +1034,12 @@ const gridForm = ref({
 
 // ── 计算属性 ──────────────────────────────────────────
 const gridVisibleParams = computed(() => {
-  const keys = ['stop_loss_pct', 'reentry_cooldown', 'reentry_pullback_pct', 'ma_entry_period', ...(MODE_SWEEP_PARAMS[gridForm.value.exit_mode] || [])]
+  // ma_cross 模式用 ma_entry_period（重回均线再入场）替代回撤条件，两者逻辑冲突故排除
+  const isMaCross = gridForm.value.exit_mode === 'ma_cross'
+  const common = isMaCross
+    ? ['stop_loss_pct', 'reentry_cooldown', 'ma_entry_period']
+    : ['stop_loss_pct', 'reentry_cooldown', 'reentry_pullback_pct', 'ma_entry_period']
+  const keys = [...common, ...(MODE_SWEEP_PARAMS[gridForm.value.exit_mode] || [])]
   return keys.map(k => ({ key: k, ...GRID_PARAM_META[k] }))
 })
 

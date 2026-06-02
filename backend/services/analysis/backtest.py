@@ -44,7 +44,10 @@ _MODE_PARAMS = {
     "ma_cross":         ["ma_period"],
 }
 # ma_entry_period: 0=不限，>0=仅在 close > MA(N) 时入场
-_COMMON_PARAMS = ["stop_loss_pct", "reentry_cooldown", "reentry_pullback_pct", "ma_entry_period"]
+# reentry_pullback_pct 对 MA 穿越策略无意义（MA 已作为趋势过滤，回撤条件冲突）
+# ma_cross 模式用 ma_entry_period 替代回撤条件，实现"重回均线再入场"
+_COMMON_PARAMS         = ["stop_loss_pct", "reentry_cooldown", "reentry_pullback_pct", "ma_entry_period"]
+_COMMON_PARAMS_MA_CROSS = ["stop_loss_pct", "reentry_cooldown", "ma_entry_period"]
 
 
 def _compute_ma(closes: np.ndarray, period: int) -> np.ndarray:
@@ -69,7 +72,8 @@ def _arange(start, stop, step):
 
 
 def _expand_grid(exit_mode: str, grid: dict, max_combos: int):
-    sweep_keys = _COMMON_PARAMS + _MODE_PARAMS.get(exit_mode, [])
+    common     = _COMMON_PARAMS_MA_CROSS if exit_mode == "ma_cross" else _COMMON_PARAMS
+    sweep_keys = common + _MODE_PARAMS.get(exit_mode, [])
     axes = {}
     for key in sweep_keys:
         spec = grid.get(key, {})
