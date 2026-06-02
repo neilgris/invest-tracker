@@ -781,9 +781,15 @@
           </el-table-column>
 
           <!-- 操作 -->
-          <el-table-column width="70" fixed="right">
+          <el-table-column width="110" fixed="right">
             <template #header>操作</template>
             <template #default="{ row }">
+              <el-button
+                type="primary" size="small"
+                :loading="restoringRecord"
+                @click="restoreFromRecord(row)"
+                style="margin-right:4px"
+              >查看</el-button>
               <el-button type="danger" size="small" @click="deleteRecord(row)">删除</el-button>
             </template>
           </el-table-column>
@@ -912,6 +918,44 @@ const deleteRecord = async (row) => {
   }
 }
 
+// ── 从历史记录恢复寻优展示 ──────────────────────────
+const restoringRecord = ref(false)
+
+const restoreFromRecord = async (row) => {
+  restoringRecord.value = true
+  try {
+    // 1. 切换到参数寻优 Tab
+    activeTab.value = 'search'
+
+    // 2. 恢复基础配置
+    gridForm.value.code       = row.code
+    gridForm.value.exit_mode  = row.exit_mode
+    gridForm.value.objective  = row.objective || 'calmar'
+    // 有 OOS 时恢复样本外起始（train_end 对应 IS 结束日）
+    gridForm.value.train_end  = row.oos_start ? row.train_end : ''
+    gridForm.value.reentry_lookback = row.best_params?.reentry_lookback || 60
+
+    // 3. 把所有参数固定为历史最优值（单点网格，step=0）
+    const saved = row.best_params || {}
+    for (const k of Object.keys(GRID_PARAM_META)) {
+      const v = saved[k]
+      if (v != null) {
+        gridForm.value.grid[k] = { min: v, max: v, step: 0 }
+      }
+    }
+
+    // 4. 确保资产列表已加载
+    if (!cacheAssets.value.length) await loadCacheAssets()
+
+    // 5. 运行寻优（跳过自动保存，避免重复入库）
+    suppressAutoSave.value = true
+    await runGridSearch()
+  } finally {
+    suppressAutoSave.value = false
+    restoringRecord.value  = false
+  }
+}
+
 // 得分计算（基于 objective 重建）
 const computeScore = (row) => {
   if (!row) return null
@@ -1031,10 +1075,11 @@ const loadCacheAssets = async () => {
 }
 
 // ── 保存记录（自动，寻优完成后静默执行）──────────────
-const savingRecord = ref(false)
+const savingRecord      = ref(false)
+const suppressAutoSave  = ref(false)   // 从历史恢复时跳过自动保存
 
 const saveCurrentRecord = async () => {
-  if (!gridResult.value || savingRecord.value) return
+  if (!gridResult.value || savingRecord.value || suppressAutoSave.value) return
   savingRecord.value = true
   try {
     const d = gridResult.value
