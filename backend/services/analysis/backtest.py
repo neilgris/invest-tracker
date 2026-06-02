@@ -88,70 +88,6 @@ def _expand_grid(exit_mode: str, grid: dict, max_combos: int):
 # 3a. 单笔交易模拟 — Python 循环版（用于完整 trade 信息）
 # ═══════════════════════════════════════════════════════════════
 
-def _sim_exit(closes: np.ndarray, entry_i: int, exit_mode: str, params: dict,
-              ma_exit: np.ndarray = None):
-    """返回 (exit_i, reason, pct, max_drawdown_pct)"""
-    EPS = 1e-9
-    n = len(closes)
-    entry_price = closes[entry_i]
-    peak = entry_price
-    trough_from_peak = 0.0
-    activated = False
-
-    stop_loss_pct   = float(params.get("stop_loss_pct", 8.0))
-    max_hold_days   = int(params.get("max_hold_days", 0) or 0)
-    take_profit_pct = float(params.get("take_profit_pct", 15.0))
-    pmax_dd_pct     = float(params.get("pmax_drawdown_pct", 15.0))
-    trigger_pct     = float(params.get("profit_trigger_pct") or params.get("cost_trigger_pct") or 20.0)
-    retention_pct   = float(params.get("profit_retention_pct", 0.5))
-    floor_pct       = float(params.get("cost_floor_pct", 0.0))
-
-    for i in range(entry_i + 1, n):
-        c    = closes[i]
-        ret  = float((c / entry_price - 1) * 100)
-        hold = i - entry_i
-
-        if c > peak:
-            peak = c
-        dd_from_peak     = float((c / peak - 1) * 100)
-        trough_from_peak = min(trough_from_peak, dd_from_peak)
-
-        if max_hold_days > 0 and hold >= max_hold_days:
-            return i, "时间止损", round(ret, 4), round(-trough_from_peak, 4)
-        if ret <= -(stop_loss_pct - EPS):
-            return i, "止损", round(ret, 4), round(-trough_from_peak, 4)
-
-        if exit_mode == "simple":
-            if ret >= take_profit_pct - EPS:
-                return i, "止盈", round(ret, 4), round(-trough_from_peak, 4)
-        elif exit_mode == "pmax_drawdown":
-            if dd_from_peak <= -(pmax_dd_pct - EPS):
-                return i, "止损", round(ret, 4), round(-trough_from_peak, 4)
-        elif exit_mode == "profit_retention":
-            peak_ret = float((peak / entry_price - 1) * 100)
-            if not activated and peak_ret >= trigger_pct - EPS:
-                activated = True
-            if activated and ret <= peak_ret * retention_pct + EPS:
-                return i, ("止盈" if ret > 0 else "止损"), round(ret, 4), round(-trough_from_peak, 4)
-        elif exit_mode == "cost_protection":
-            if not activated and ret >= trigger_pct - EPS:
-                activated = True
-            if activated and ret <= floor_pct + EPS:
-                return i, ("止盈" if ret > 0 else "止损"), round(ret, 4), round(-trough_from_peak, 4)
-        elif exit_mode == "ma_cross":
-            # 价格跌破 MA 时出场；MA 数组在外部按全价格序列预计算
-            if ma_exit is not None and i < len(ma_exit) and not np.isnan(ma_exit[i]):
-                if c < float(ma_exit[i]):
-                    return i, ("止盈" if ret > 0 else "止损"), round(ret, 4), round(-trough_from_peak, 4)
-
-    final_ret = float((closes[-1] / entry_price - 1) * 100)
-    return n - 1, "持有中", round(final_ret, 4), round(-trough_from_peak, 4)
-
-
-# ═══════════════════════════════════════════════════════════════
-# 3b. 单笔交易模拟 — numpy 向量化版（用于网格搜索快速路径）
-# ═══════════════════════════════════════════════════════════════
-
 def _sim_exit_vec(closes: np.ndarray, entry_i: int, exit_mode: str, params: dict,
                   ma_exit: np.ndarray = None):
     """
@@ -254,17 +190,16 @@ def _run_cohort(dates, closes, start_i: int, end_i: int,
     while j < n:
         if j >= cooldown_until and _can_enter(closes, j, params, ma_entry):
             entry_price = closes[j]
-            exit_i, reason, pct, max_dd = _sim_exit(closes[:n], j, exit_mode, params, ma_exit)
+            exit_i, reason, pct = _sim_exit_vec(closes[:n], j, exit_mode, params, ma_exit)
             for k in range(j, exit_i + 1):
                 equity.append((dates[k], round(float(nav * closes[k] / entry_price), 6)))
             trades.append({
-                "buy_date":     dates[j],
-                "buy_price":    round(float(entry_price), 4),
-                "sell_date":    dates[exit_i] if reason != "持有中" else None,
-                "sell_price":   round(float(closes[exit_i]), 4),
-                "pct":          round(float(pct), 4),
-                "sell_reason":  reason,
-                "max_drawdown": round(float(max_dd), 4),
+                "buy_date":   dates[j],
+                "buy_price":  round(float(entry_price), 4),
+                "sell_date":  dates[exit_i] if reason != "持有中" else None,
+                "sell_price": round(float(closes[exit_i]), 4),
+                "pct":        round(float(pct), 4),
+                "sell_reason": reason,
             })
             nav *= 1.0 + pct / 100.0
             cooldown_until = exit_i + 1 + reentry_cooldown
