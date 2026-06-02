@@ -106,20 +106,7 @@
           <!-- 最优结果横幅 -->
           <el-alert type="success" :closable="false" show-icon style="margin-bottom:14px">
             <template #title>
-              <div style="display:flex;justify-content:space-between;align-items:center;width:100%">
-                <span>最优组合（按{{ gridObjectiveLabel }}）：{{ gridBestParamsText }}</span>
-                <el-button
-                  size="small"
-                  :type="recordSaved ? 'default' : 'primary'"
-                  :icon="recordSaved ? 'Check' : ''"
-                  :loading="savingRecord"
-                  :disabled="recordSaved"
-                  @click="saveCurrentRecord"
-                  style="margin-left:12px;flex-shrink:0"
-                >
-                  {{ recordSaved ? '已保存' : '保存记录' }}
-                </el-button>
-              </div>
+              最优组合（按{{ gridObjectiveLabel }}）：{{ gridBestParamsText }}
             </template>
             <!-- 一行核心指标 -->
             <el-tooltip effect="dark" placement="bottom" :show-after="200">
@@ -1040,8 +1027,7 @@ const loadCacheAssets = async () => {
   }
 }
 
-// ── 保存记录 ──────────────────────────────────────────
-const recordSaved  = ref(false)
+// ── 保存记录（自动，寻优完成后静默执行）──────────────
 const savingRecord = ref(false)
 
 const saveCurrentRecord = async () => {
@@ -1078,8 +1064,6 @@ const saveCurrentRecord = async () => {
       total_combos:     d.total_combos,
       bh_return:        d.benchmark_total_return_pct,
     })
-    recordSaved.value = true
-    ElMessage.success('已保存到历史记录')
     listBacktestCodes().then(r => { historyCodes.value = r.data })  // 刷新标的列表
   } catch (e) {
     ElMessage.error('保存失败: ' + e.message)
@@ -1108,7 +1092,7 @@ const runGridSearch = async () => {
     if (!res.data.ok) return ElMessage.error(res.data.message || '寻优失败')
     gridResult.value = res.data
     gridBestChartView.value = 'trade'
-    recordSaved.value = false   // 新结果出来后重置保存状态
+    saveCurrentRecord()         // 自动保存最优解（后台静默执行）
   } catch (e) {
     ElMessage.error('寻优失败: ' + (e.response?.data?.detail || e.message))
   } finally {
