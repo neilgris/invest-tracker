@@ -336,7 +336,7 @@ import {
   analysisCacheStatus, analysisCacheSync, analysisCacheSyncBatch, analysisCacheProgress,
   analysisCacheSyncL1, analysisCacheSyncL2, analysisCacheSyncL6, analysisCacheSyncL6C, analysisCacheSyncL3Theme,
 
-  analysisDataOHLCV, analysisDataDistribution, analysisVolumeAnalysis, analysisDataStats,
+  analysisDataOHLCV, analysisDataStats,
   getIndexPeData
 } from '../api'
 
@@ -377,8 +377,6 @@ const syncForm = ref({ code: '', asset_type: 'index' })
 const dataViewForm = ref({ code: '', assetType: 'all' })
 const dataStats = ref({ exists: false })
 const klineData = ref([])
-const distData = ref({ bins: [], freq: [] })
-const volumeData = ref([])
 // 主题指数
 const themeAssets = ref([])
 const themeSearch = ref('')
@@ -1002,57 +1000,6 @@ const themePeChartOption = computed(() => {
     ]
   }
 })
-
-// 分布图配置
-const distOption = computed(() => {
-  if (!distData.value.freq?.length) return {}
-  return {
-    tooltip: { trigger: 'axis' },
-    grid: { left: '15%', right: '10%', bottom: '15%' },
-    xAxis: { 
-      type: 'category', 
-      data: distData.value.bins.map(b => b.toFixed(2)),
-      name: '涨跌幅%'
-    },
-    yAxis: { type: 'value', name: '频次' },
-    series: [{
-      type: 'bar',
-      data: distData.value.freq,
-      itemStyle: { color: '#409eff' }
-    }]
-  }
-})
-
-// 成交量图配置
-const volumeOption = computed(() => {
-  if (!volumeData.value.length) return {}
-  return {
-    tooltip: { trigger: 'axis' },
-    grid: { left: '10%', right: '10%', bottom: '15%' },
-    xAxis: { type: 'category', data: volumeData.value.map(d => d.date) },
-    yAxis: [
-      { type: 'value', name: '成交量' },
-      { type: 'value', name: '收盘价', position: 'right' }
-    ],
-    dataZoom: [{ type: 'inside' }],
-    series: [
-      {
-        type: 'bar',
-        data: volumeData.value.map(d => d.volume),
-        itemStyle: { color: '#909399' },
-        name: '成交量'
-      },
-      {
-        type: 'line',
-        data: volumeData.value.map(d => d.close),
-        yAxisIndex: 1,
-        itemStyle: { color: '#409eff' },
-        name: '收盘价'
-      }
-    ]
-  }
-})
-
 
 onMounted(() => {
   loadCacheStatus()

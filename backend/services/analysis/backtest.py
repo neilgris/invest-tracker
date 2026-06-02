@@ -470,7 +470,7 @@ def _sortino_ratio(equity_navs: list, n_days: int) -> float:
 def _cohort_stats_fast(trades, final_nav: float, max_dd: float,
                         bh_total_return: float, bh_max_dd: float, n_days: int):
     """
-    网格搜索用：计算评分所需指标 + 年化收益 + Profit Factor。
+    网格搜索用：只返回评分和排名展示所需的 6 个指标。
     不做任何 O(n) 字符串查找。
     """
     completed    = [t for t in trades if t["sell_reason"] != "持有中"]
@@ -486,10 +486,6 @@ def _cohort_stats_fast(trades, final_nav: float, max_dd: float,
         "capture_rate":     round(capture_rate, 4),
         "dd_reduction_pct": dd_reduction,
         "profit_factor":    pf if pf != float("inf") else 99.9,
-        "whipsaw_rate_pct": 0.0,
-        "time_in_market_pct": 0,
-        "completed_trades": len(completed),
-        "win_rate": round(sum(1 for t in completed if t["pct"] > 0) / max(len(completed), 1) * 100.0, 1),
     }
 
 
@@ -529,30 +525,23 @@ def _cohort_stats_full(trades, equity_navs, bh_total_return, bh_max_dd,
         "whipsaw_rate_pct": whipsaw_rate,
         "avg_win":          round(sum(wins) / len(wins), 2) if wins else 0.0,
         "avg_loss":         round(sum(losses) / len(losses), 2) if losses else 0.0,
-        "time_in_market_pct": 0,
         "completed_trades": len(completed),
-        "win_rate": round(len(wins) / max(len(completed), 1) * 100.0, 1),
+        "win_rate":         round(len(wins) / max(len(completed), 1) * 100.0, 1),
     }
 
 
 def _score(stat: dict, objective: str) -> float:
-    """
-    排序目标得分。Calmar 改用年化收益（而非总收益）：
-    - 避免测试区间长短影响得分
-    - 年化收益 / 最大回撤 = 标准 Calmar Ratio
-    """
-    ann = stat.get("ann_return", stat["total_return"])   # 兼容旧代码
+    """Calmar = 年化收益 / 最大回撤（标准定义，消除测试区间长短偏差）。"""
+    ann = stat["ann_return"]
     dd  = stat["max_drawdown"] or 0.001
-    cap = stat["capture_rate"]
-    ddr = stat["dd_reduction_pct"]
     if objective == "calmar":
         return round(ann / dd, 4) if dd > 0 else 0.0
     elif objective == "total_return":
         return round(stat["total_return"], 4)
     elif objective == "capture":
-        return round(cap, 4)
+        return round(stat["capture_rate"], 4)
     elif objective == "dd_reduction":
-        return round(ddr, 4)
+        return round(stat["dd_reduction_pct"], 4)
     return round(ann / dd, 4)
 
 
@@ -600,7 +589,6 @@ def run_grid_search(db, code: str, exit_mode: str, grid: dict,
     bh_dd_is     = _max_drawdown_from_curve(is_closes / is_closes[0])
 
     # ── 预计算 date_idx ─────────────────────────────────────
-    date_idx_all = {d: i for i, d in enumerate(all_dates)}
     date_idx_is  = {d: i for i, d in enumerate(is_dates)}
 
     # ── 展开网格 ───────────────────────────────────────────
@@ -646,8 +634,7 @@ def run_grid_search(db, code: str, exit_mode: str, grid: dict,
             "capture_rate":     round(rep["capture_rate"], 4),
             "dd_reduction_pct": round(rep["dd_reduction_pct"], 1),
             "profit_factor":    round(rep["profit_factor"], 2),
-            "whipsaw_rate_pct": 0.0,
-            "time_in_market_pct": 0,
+            "whipsaw_rate_pct": 0.0,   # 快速路径跳过，仅 top[0] 有真实值
         })
 
     if not results:
