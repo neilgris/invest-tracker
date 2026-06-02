@@ -17,6 +17,7 @@
                 <el-option label="移动止损 Pmax" value="pmax_drawdown" />
                 <el-option label="浮盈保留" value="profit_retention" />
                 <el-option label="成本保护" value="cost_protection" />
+                <el-option label="MA均线穿越" value="ma_cross" />
               </el-select>
             </el-form-item>
             <div v-if="EXIT_MODE_DESC[gridForm.exit_mode]" class="mode-desc-box">
@@ -29,6 +30,19 @@
                 <el-option label="收益捕获率" value="capture" />
                 <el-option label="回撤削减率" value="dd_reduction" />
               </el-select>
+            </el-form-item>
+            <div v-if="OBJECTIVE_DESC[gridForm.objective]" class="objective-desc-box">
+              <div class="objective-formula">{{ OBJECTIVE_DESC[gridForm.objective].formula }}</div>
+              <div style="margin-top:4px">{{ OBJECTIVE_DESC[gridForm.objective].body }}</div>
+            </div>
+            <el-divider style="margin:10px 0" />
+            <el-form-item label="回撤入场回看">
+              <el-input-number
+                v-model="gridForm.reentry_lookback"
+                :min="10" :max="250" :step="10" :precision="0"
+                style="width:100%"
+              />
+              <div class="param-desc">回撤入场判断"近N日高点"的时间窗口（交易日）。默认60日≈3个月，参与扫描的回撤阈值在下方参数区间设置。</div>
             </el-form-item>
             <el-form-item label="样本外起始">
               <el-date-picker
@@ -48,7 +62,7 @@
           <template #header>
             <div style="display:flex;justify-content:space-between;align-items:center">
               <span>参数区间 / 步长</span>
-              <el-tag size="small" :type="gridComboCount > 2000 ? 'danger' : 'success'">
+              <el-tag size="small" type="success">
                 {{ gridComboCount }} 组合
               </el-tag>
             </div>
@@ -71,12 +85,9 @@
         </el-card>
 
         <el-button type="primary" style="width:100%" :loading="loading"
-          :disabled="!gridForm.code || gridComboCount > 2000" @click="runGridSearch">
+          :disabled="!gridForm.code" @click="runGridSearch">
           开始寻优（{{ gridComboCount }} 组合）
         </el-button>
-        <div v-if="gridComboCount > 2000" style="color:#f56c6c;font-size:12px;margin-top:6px;text-align:center">
-          组合数超过 2000，请增大步长或缩小区间
-        </div>
       </el-col>
 
       <!-- 右侧：结果 -->
@@ -93,62 +104,107 @@
             <template #title>
               最优组合（按{{ gridObjectiveLabel }}）：{{ gridBestParamsText }}
             </template>
+            <!-- 一行核心指标 -->
             <el-tooltip effect="dark" placement="bottom" :show-after="200">
               <template #content>
-                <b>样本内总收益</b><br/>
-                策略在寻优区间的累计收益（5 cohorts 中位数）。<br/>
-                括号内为同期买入持有收益，可直接对比策略是否跑赢大盘。<br/>
-                ⚠️ 高于 B&H 很多时需结合样本外验证判断是否过拟合。
+                <b>年化收益</b>（已按252交易日/年折算）<br/>
+                消除测试区间长短的影响，才能跨标的/跨时段比较。<br/>
+                同期 B&H 括号内参考。
               </template>
-              <span class="best-metric">总收益 <b>{{ gridResult.best.total_return_pct }}%</b>（B&H {{ gridResult.benchmark_total_return_pct }}%）</span>
+              <span class="best-metric">年化 <b>{{ gridResult.best.ann_return_pct }}%</b>（总收益 {{ gridResult.best.total_return_pct }}%）</span>
             </el-tooltip>
             &nbsp;·&nbsp;
             <el-tooltip effect="dark" placement="bottom" :show-after="200">
               <template #content>
                 <b>最大回撤</b><br/>
                 持仓期净值从最高点到最低点的最大跌幅（5 cohorts 均值）。<br/>
-                同期 B&H 最大回撤见「回撤削减」列，两者差值越大说明保护效果越强。<br/>
-                ETF 实盘中回撤超过 30% 通常需要评估是否符合自身风险承受能力。
+                ETF 实盘中超过 30% 通常需要评估是否符合自身风险承受能力。
               </template>
-              <span class="best-metric">回撤 <b>{{ gridResult.best.max_drawdown }}%</b></span>
+              <span class="best-metric" :style="gridResult.best.max_drawdown > 40 ? 'color:#e6a23c' : ''">
+                最大回撤 <b>{{ gridResult.best.max_drawdown }}%</b>
+              </span>
             </el-tooltip>
             &nbsp;·&nbsp;
             <el-tooltip effect="dark" placement="bottom" :show-after="200">
               <template #content>
-                <b>收益捕获率</b> = 策略总收益 ÷ B&H 总收益<br/>
-                表示拿到了大盘涨幅的几成：<br/>
-                · 100% = 完全跟上大盘<br/>
-                · &gt;100% = 跑赢大盘（策略有超额收益）<br/>
-                · &lt;0% = 大盘正收益但策略亏损<br/>
-                注意：B&H 为负时此指标无实际比较意义。
+                <b>Calmar（年化） = 年化收益% ÷ 最大回撤%</b><br/>
+                当前排序目标「综合得分」使用此公式。<br/>
+                代表每承受1%最大回撤能换来多少%年化收益，越高越好。
               </template>
-              <span class="best-metric">捕获率 <b>{{ ((gridResult.best.capture_rate || 0) * 100).toFixed(1) }}%</b></span>
+              <span class="best-metric">Calmar <b>{{ gridResult.best.max_drawdown > 0 ? (gridResult.best.ann_return_pct / gridResult.best.max_drawdown).toFixed(2) : '-' }}</b></span>
             </el-tooltip>
             &nbsp;·&nbsp;
             <el-tooltip effect="dark" placement="bottom" :show-after="200">
               <template #content>
-                <b>回撤削减</b> = (B&H最大回撤 − 策略最大回撤) ÷ B&H最大回撤<br/>
-                衡量策略相对"买入持有"减少了多少下行风险：<br/>
-                · 正值 = 策略有效保护了资金（越高越好）<br/>
-                · 负值 = 策略回撤反而比大盘更大（止损后又在更低价重新入场）<br/>
-                理想情况：捕获率高 + 回撤削减也高，两者兼顾。
+                <b>盈亏比（Profit Factor）= 全部盈利之和 ÷ 全部亏损之和</b><br/>
+                直白解读：每亏1元，能赚回多少元。<br/>
+                · &gt;2.0：优秀&nbsp; · 1.5–2.0：良好&nbsp; · &lt;1.5：需改进<br/>
+                与胜率结合判断：胜率低但盈亏比高，同样可行。
               </template>
-              <span class="best-metric">回撤削减 <b>{{ gridResult.best.dd_reduction_pct }}%</b></span>
+              <span class="best-metric" :style="gridResult.best.profit_factor < 1.5 ? 'color:#e6a23c' : 'color:#67c23a'">
+                盈亏比 <b>{{ gridResult.best.profit_factor }}</b>
+              </span>
             </el-tooltip>
             &nbsp;·&nbsp;
             <el-tooltip effect="dark" placement="bottom" :show-after="200">
               <template #content>
-                <b>Whipsaw 率</b><br/>
-                止损卖出后价格在 N 个交易日内反弹超过止损价的比例。<br/>
-                · &lt;40%：止损触发质量较好，多数为真实趋势反转<br/>
-                · 40–60%：可接受，噪声与信号参半<br/>
-                · &gt;60%：止损被噪声频繁触发，建议放宽阈值或延长冷静期<br/>
-                Whipsaw 高不代表策略差，但意味着实盘中摩擦成本会更高。
+                <b>Sortino = 年化收益 ÷ 下行年化标准差</b><br/>
+                只惩罚下行波动，比 Sharpe 更适合止损策略。<br/>
+                · &gt;1.0：良好&nbsp; · 0.5–1.0：可接受&nbsp; · &lt;0.5：风险偏高
+              </template>
+              <span class="best-metric">Sortino <b>{{ gridResult.best.sortino }}</b></span>
+            </el-tooltip>
+            &nbsp;·&nbsp;
+            <el-tooltip effect="dark" placement="bottom" :show-after="200">
+              <template #content>
+                <b>Whipsaw 率</b> = 止损出场后 N 个交易日内价格回到<b>入场价</b>以上的比例<br/>
+                含义：这笔止损是"冤枉"的——持有不动本可盈利<br/>
+                · &lt;30%：止损质量较好&nbsp; · 30–60%：噪声与信号参半&nbsp; · &gt;60%：参数过紧
               </template>
               <span class="best-metric" :style="gridResult.best.whipsaw_rate_pct > 60 ? 'color:#e6a23c' : ''">
                 Whipsaw <b>{{ gridResult.best.whipsaw_rate_pct }}%</b>
               </span>
             </el-tooltip>
+
+            <!-- 第二行：心理承受力指标 -->
+            <div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(0,0,0,0.08);font-size:12px;color:#606266">
+              <el-tooltip effect="dark" placement="bottom" :show-after="200">
+                <template #content>
+                  <b>最大连续亏损次数</b><br/>
+                  策略历史上最多连续亏损多少笔。<br/>
+                  即使策略长期盈利，实战中连亏时能否坚持执行是关键。<br/>
+                  超过5笔建议评估自己是否能接受。
+                </template>
+                <span style="cursor:help;margin-right:12px">
+                  最大连亏 <b :style="gridResult.best.max_consec_loss >= 5 ? 'color:#e6a23c' : ''">{{ gridResult.best.max_consec_loss }} 笔</b>
+                </span>
+              </el-tooltip>
+              <el-tooltip effect="dark" placement="bottom" :show-after="200">
+                <template #content>
+                  <b>最大回撤恢复期</b><br/>
+                  从最大回撤的最低点，恢复到前高需要多少个交易日。<br/>
+                  恢复期越长，意味着持有体验越痛苦。<br/>
+                  超过2年（504交易日）需要有足够的心理预期。
+                </template>
+                <span style="cursor:help;margin-right:12px">
+                  回撤恢复期 <b :style="gridResult.best.recovery_days > 504 ? 'color:#e6a23c' : ''">
+                    {{ gridResult.best.recovery_days }} 日（{{ (gridResult.best.recovery_days / 21).toFixed(1) }} 个月）
+                  </b>
+                </span>
+              </el-tooltip>
+              <el-tooltip effect="dark" placement="bottom" :show-after="200">
+                <template #content>
+                  <b>均盈 / 均亏</b><br/>
+                  每笔盈利交易的平均收益 vs 每笔亏损交易的平均亏损。<br/>
+                  均盈 &gt; 均亏：即使胜率不高也能整体盈利（好策略的特征）。<br/>
+                  均盈 &lt; 均亏：需要靠高胜率来弥补，更脆弱。
+                </template>
+                <span style="cursor:help">
+                  均盈 <b style="color:#f56c6c">{{ gridResult.best.avg_win > 0 ? '+' : '' }}{{ gridResult.best.avg_win }}%</b>
+                  &nbsp;/&nbsp;均亏 <b style="color:#67c23a">{{ gridResult.best.avg_loss }}%</b>
+                </span>
+              </el-tooltip>
+            </div>
           </el-alert>
 
           <!-- 最优组合：价格走势 / 净值对比 / 收益分布（合并卡片，可切换） -->
@@ -382,7 +438,7 @@
               <el-table-column width="86">
                 <template #header>
                   <el-tooltip placement="top" :show-after="300" effect="dark">
-                    <template #content><b>Whipsaw 率</b><br/>止损卖出后，价格在 N 个交易日内反弹超过止损价的比例。<br/>高 Whipsaw 率（&gt;60%）说明止损被噪声频繁触发，<br/>建议放宽阈值或延长冷静期。<br/>此指标只反映参数敏感性，不直接影响收益。</template>
+                    <template #content><b>Whipsaw 率</b> = 止损出场后 N 日内价格回到<b>入场价</b>以上的比例<br/>即"这笔止损是冤枉的——持有不动本可盈利"<br/>&gt;60% 说明参数过紧，止损多为噪声触发，建议放宽阈值或延长冷静期</template>
                     <span class="col-tip">Whipsaw</span>
                   </el-tooltip>
                 </template>
@@ -413,11 +469,35 @@ import { ElMessage } from 'element-plus'
 import VChart from 'vue-echarts'
 import { analysisCacheStatus, analysisGridSearch } from '../api'
 
+// ── 排序目标说明 ──────────────────────────────────────
+const OBJECTIVE_DESC = {
+  calmar: {
+    formula: '得分 = 年化收益% ÷ 最大回撤%',
+    body: '标准 Calmar Ratio，同时衡量收益与风险。\n用年化收益而非总收益，避免测试区间长短影响评分（14年数据不能和5年数据的总收益直接比）。\n示例：年化收益6%、最大回撤20% → Calmar=0.30',
+  },
+  total_return: {
+    formula: '得分 = 策略总收益%',
+    body: '只看绝对收益，完全不考虑持仓期间的下行风险。适合对回撤有独立判断、纯粹追求最大收益的场景。',
+  },
+  capture: {
+    formula: '得分 = 策略总收益 ÷ B&H总收益',
+    body: '衡量策略捕获了大盘涨幅的几成。\n>100% = 跑赢大盘；100% = 完全跟上；<100% = 跑输大盘；负值 = 大盘正收益但策略亏损。\n注意：B&H为负时此值无实际意义。',
+  },
+  dd_reduction: {
+    formula: '得分 = (B&H最大回撤 - 策略最大回撤) ÷ B&H最大回撤 × 100%',
+    body: '衡量止损策略相对"买入持有"减少了多少下行风险。\n正值 = 止损有效保护了资金；负值 = 止损后在更低价再入场，回撤反而更大。\n适合重点想评估"止损到底有没有用"的场景。',
+  },
+}
+
 // ── 退出模式说明 & 参数说明 ──────────────────────────
 const EXIT_MODE_DESC = {
   simple: {
     title: '固定止盈止损',
     body: '设两条固定价格线：浮盈 ≥ 止盈阈值时卖出；浮亏 ≥ 止损阈值时离场。逻辑最简单，参数最少，建议作为基准对比其他模式。',
+  },
+  ma_cross: {
+    title: 'MA 均线穿越（趋势跟踪）',
+    body: '价格跌破 MA(N) 时出场（盈利=止盈，亏损=止损），兜底止损作安全网。\n持仓期间只要价格在 MA 上方就继续持有，跌破即离场，自动跟随趋势。\n建议：MA60（3个月）适合中线，MA120（半年）减少噪声，MA200（年线）趋势信号强。',
   },
   pmax_drawdown: {
     title: '移动止损（Trailing Stop）',
@@ -442,8 +522,11 @@ const PARAM_DESC = {
   profit_retention_pct: '浮盈保留比（0～1）：激活后，止损线 = 历史最高浮盈 × 此比例。0.5=保留50%浮盈，0.8=保留80%（保护更激进，但容易提前触发）。',
   cost_trigger_pct:     '激活阈值：浮盈须先达到此%后保本保护才生效。建议至少5-10%，给策略一定获利空间再锁仓位。',
   cost_floor_pct:       '保护底线：激活后止损线 = 成本价×(1+此值/100)。0=保本，2=成本+2%，-1=允许亏1%才触发（负值通常不推荐）。',
-  reentry_cooldown:     '冷静期（日历天）：止损/止盈后等待此天数再重新入场，避免震荡市频繁进出被"锯齿"消耗。宽基ETF建议20-30天。',
-  whipsaw_window:       'Whipsaw判定窗口（交易日）：止损卖出后，若此日内价格反弹超过止损价则判为假止损。此参数只影响统计分析，不影响实际交易逻辑。',
+  reentry_cooldown:     '冷静期（交易日）：止损/止盈后等待此天数再重新入场，避免震荡市频繁进出被"锯齿"消耗。宽基ETF建议20-30天。',
+  reentry_pullback_pct: '回撤入场阈值（%）：冷静期满后，还需从近N日高点回撤此%才触发买入；0=冷静期满立即入场（原始行为）。\n作用：避免追高，等市场回调到相对低位再买入。建议范围5-10%。',
+  ma_entry_period:      'MA入场过滤（交易日）：仅在 close > MA(N) 时允许入场，作为趋势过滤器，避免在熊市中买入。\n0=不过滤（任何时候都可买入）。\n常用：MA200=年线过滤，只在长期趋势向上时参与。',
+  ma_period:            'MA均线周期（交易日）：ma_cross 模式下，价格跌破此均线时出场。\n常用：60≈3个月（中线），120≈半年（减少噪声），200≈年线（趋势信号最强）。',
+  whipsaw_window:       'Whipsaw判定窗口（交易日）：止损出场后，若此日内价格回到入场价以上则判为假止损（冤枉单）。此参数只影响统计分析，不影响实际交易逻辑。',
 }
 
 // ── 状态 ─────────────────────────────────────────────
@@ -455,11 +538,14 @@ const gridBestChartView = ref('trade')
 
 // ── 参数元数据 ────────────────────────────────────────
 const GRID_PARAM_META = {
-  stop_loss_pct:        { label: '止损阈值%',     min: 1,  max: 50,  step: 1,    precision: 1, def: { min: 10, max: 25,  step: 5    } },
-  reentry_cooldown:     { label: '再入场等待(日)', min: 0,  max: 120, step: 5,    precision: 0, def: { min: 5,  max: 20,  step: 5    } },
+  stop_loss_pct:        { label: '止损阈值%',      min: 1,  max: 50,  step: 1,   precision: 1, def: { min: 10, max: 25,  step: 5    } },
+  reentry_cooldown:     { label: '再入场等待(日)',  min: 0,  max: 120, step: 5,   precision: 0, def: { min: 5,  max: 20,  step: 5    } },
+  reentry_pullback_pct: { label: '回撤入场阈值%',  min: 0,  max: 20,  step: 2,   precision: 1, def: { min: 0,  max: 10,  step: 2    } },
+  ma_entry_period:      { label: 'MA入场过滤(日)',  min: 0,  max: 250, step: 20,  precision: 0, def: { min: 0,  max: 200, step: 100  } },
+  ma_period:            { label: 'MA均线周期(日)',  min: 5,  max: 250, step: 20,  precision: 0, def: { min: 60, max: 200, step: 20   } },
   take_profit_pct:      { label: '止盈阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 10, max: 40,  step: 10   } },
   pmax_drawdown_pct:    { label: 'Pmax回撤%',     min: 1,  max: 50,  step: 1,    precision: 1, def: { min: 5,  max: 20,  step: 5    } },
-  profit_trigger_pct:   { label: '激活阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 10, max: 30,  step: 10   } },
+  profit_trigger_pct:   { label: '激活阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 5, max: 30,  step: 5   } },
   profit_retention_pct: { label: '浮盈保留比',    min: 0,  max: 1,   step: 0.05, precision: 2, def: { min: 0.5, max: 0.8, step: 0.05 } },
   cost_trigger_pct:     { label: '激活阈值%',     min: 1,  max: 200, step: 1,    precision: 1, def: { min: 5,  max: 20,  step: 5    } },
   cost_floor_pct:       { label: '保护底线%',     min: 0,  max: 50,  step: 0.5,  precision: 1, def: { min: 0,  max: 5,   step: 2.5  } },
@@ -470,6 +556,7 @@ const MODE_SWEEP_PARAMS = {
   pmax_drawdown:    ['pmax_drawdown_pct'],
   profit_retention: ['profit_trigger_pct', 'profit_retention_pct'],
   cost_protection:  ['cost_trigger_pct', 'cost_floor_pct'],
+  ma_cross:         ['ma_period'],
 }
 
 const makeGridDefaults = () => {
@@ -485,12 +572,13 @@ const gridForm = ref({
   exit_mode: 'pmax_drawdown',
   objective: 'calmar',
   train_end: '',
+  reentry_lookback: 60,   // 回撤入场的高点回看窗口（交易日），固定配置不参与扫描
   grid: makeGridDefaults(),
 })
 
 // ── 计算属性 ──────────────────────────────────────────
 const gridVisibleParams = computed(() => {
-  const keys = ['stop_loss_pct', 'reentry_cooldown', ...(MODE_SWEEP_PARAMS[gridForm.value.exit_mode] || [])]
+  const keys = ['stop_loss_pct', 'reentry_cooldown', 'reentry_pullback_pct', 'ma_entry_period', ...(MODE_SWEEP_PARAMS[gridForm.value.exit_mode] || [])]
   return keys.map(k => ({ key: k, ...GRID_PARAM_META[k] }))
 })
 
@@ -532,7 +620,6 @@ const loadCacheAssets = async () => {
 
 const runGridSearch = async () => {
   if (!gridForm.value.code) return ElMessage.warning('请选择标的')
-  if (gridComboCount.value > 2000) return ElMessage.error('组合数超过 2000')
   loading.value = true
   gridResult.value = null
   try {
@@ -545,6 +632,7 @@ const runGridSearch = async () => {
       exit_mode: gridForm.value.exit_mode,
       objective: gridForm.value.objective,
       train_end: gridForm.value.train_end || null,
+      reentry_lookback: gridForm.value.reentry_lookback || 60,
       grid,
     })
     if (!res.data.ok) return ElMessage.error(res.data.message || '寻优失败')
@@ -808,6 +896,8 @@ onMounted(loadCacheAssets)
 .col-tip     { cursor: help; border-bottom: 1px dashed #909399; }
 .best-metric { cursor: help; border-bottom: 1px dashed #67c23a; }
 .mode-desc-box { background:#f0f9eb; border-left:3px solid #67c23a; border-radius:4px; padding:8px 10px; font-size:12px; color:#606266; line-height:1.7; margin-bottom:12px; white-space:pre-line; }
+.objective-desc-box { background:#f0f4ff; border-left:3px solid #409eff; border-radius:4px; padding:8px 10px; font-size:12px; color:#606266; line-height:1.7; margin-bottom:12px; white-space:pre-line; }
+.objective-formula  { font-weight:bold; color:#409eff; font-size:13px; margin-bottom:2px; font-family:monospace; }
 .param-desc    { font-size:11px; color:#909399; line-height:1.6; margin-top:3px; }
 :deep(.grid-best-row) { background: #f0f9eb !important; font-weight: bold; }
 :deep(.oos-row-good)  { background: #f0f9eb !important; }

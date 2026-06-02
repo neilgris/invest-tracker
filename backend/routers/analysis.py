@@ -465,22 +465,21 @@ def report_pair(req: CorrelationRequest):
 class GridSearchRequest(BaseModel):
     code: str
     exit_mode: str = "pmax_drawdown"
-    # grid: {param_name: {"min":x, "max":y, "step":z}}
     grid: dict
-    objective: str = "calmar"   # calmar / total_return / capture / dd_reduction
+    objective: str = "calmar"
     entry_freq: int = 5
     whipsaw_window: int = 20
-    max_combos: int = 2000
+    max_combos: int = 100000
     top_n: int = 30
-    train_end: Optional[str] = None   # "YYYY-MM-DD"，不填则全历史
-    oos_top_n: int = 5                # 样本外验证取 Top N
+    train_end: Optional[str] = None
+    oos_top_n: int = 5
+    reentry_lookback: int = 60   # 回撤入场高点回看窗口（交易日）
 
 
 @router.post("/backtest/grid-search")
 def grid_search(req: GridSearchRequest, db: Session = Depends(get_db)):
     """
     参数网格搜索：对单一退出模式扫描参数笛卡尔积，按目标排序输出 top 组合 + 热力图。
-    objective 默认 calmar（总收益/最大回撤，风险调整）。
     """
     from services.analysis.backtest import run_grid_search
     return run_grid_search(
@@ -495,5 +494,6 @@ def grid_search(req: GridSearchRequest, db: Session = Depends(get_db)):
         top_n=req.top_n,
         train_end=req.train_end,
         oos_top_n=req.oos_top_n,
+        reentry_lookback=req.reentry_lookback,
     )
 
