@@ -502,17 +502,6 @@
           :default-sort="{ prop: 'created_at', order: 'descending' }"
         >
           <!-- 时间 -->
-          <el-table-column prop="created_at" width="150" sortable>
-            <template #header>
-              <el-tooltip content="寻优执行时间" placement="top" :show-after="300">
-                <span class="col-tip">时间</span>
-              </el-tooltip>
-            </template>
-            <template #default="{ row }">
-              <span style="font-size:12px">{{ row.created_at?.slice(0,16).replace('T',' ') }}</span>
-            </template>
-          </el-table-column>
-
           <!-- 标的 -->
           <el-table-column width="130">
             <template #header>
@@ -779,6 +768,18 @@
             </template>
           </el-table-column>
 
+          <!-- 时间（最后展示，聚焦指标优先） -->
+          <el-table-column prop="created_at" width="150" sortable>
+            <template #header>
+              <el-tooltip content="寻优执行时间" placement="top" :show-after="300">
+                <span class="col-tip">时间</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <span style="font-size:12px">{{ row.created_at?.slice(0,16).replace('T',' ') }}</span>
+            </template>
+          </el-table-column>
+
           <!-- 操作 -->
           <el-table-column width="70" fixed="right">
             <template #header>操作</template>
@@ -942,7 +943,9 @@ const exitModeTagType = (mode) => {
 }
 const formatParams = (row) => {
   if (!row.best_params || !row.sweep_params?.length) return '-'
-  return row.sweep_params.map(k => `${k}=${row.best_params[k]}`).join('  ')
+  return row.sweep_params
+    .map(k => `${GRID_PARAM_META[k]?.label ?? k}=${row.best_params[k]}`)
+    .join('  ')
 }
 
 // ── 参数元数据 ────────────────────────────────────────
